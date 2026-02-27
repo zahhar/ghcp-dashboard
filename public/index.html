@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GitHub Copilot Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div class="dashboard-container">
+        <header class="header">
+            <div class="header-content">
+                <h1>AI Copilot Dashboard</h1>
+                <p class="subtitle">Insights into engineering momentum and AI adoption</p>
+            </div>
+            <div class="header-stats">
+                <div class="stat-box gradient-purple">
+                    <span class="stat-label">Total Users</span>
+                    <span class="stat-value" id="stat-total-users">--</span>
+                </div>
+                <div class="stat-box gradient-blue">
+                    <span class="stat-label">Total Interactions</span>
+                    <span class="stat-value" id="stat-total-interactions">--</span>
+                </div>
+            </div>
+        </header>
+
+        <main class="single-layout">
+            <!-- All Users -->
+            <section class="card fame-card glass">
+                <div class="card-header">
+                    <h2>🏆 All Copilot Users</h2>
+                    <p>Sorted by Interactions</p>
+                </div>
+                <div class="table-container">
+                    <table class="data-table" id="users-table">
+                        <thead>
+                            <tr>
+                                <th>Rank</th>
+                                <th>User</th>
+                                <th>Interactions</th>
+                                <th>LOC Added</th>
+                                <th>LOC Deleted</th>
+                                <th>Accept Rate</th>
+                                <th>Fav Model</th>
+                                <th>Fav IDE</th>
+                                <th>Active Days</th>
+                                <th>Agent/Chat Days</th>
+                            </tr>
+                        </thead>
+                        <tbody id="users-body">
+                            <!-- Populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </main>
+    </div>
+    <script src="app.js"></script>
+</body>
+
+</html>
