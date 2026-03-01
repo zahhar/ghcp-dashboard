@@ -1,0 +1,202 @@
+{
+  "mkhan-external": {
+    "name": "M. Khan",
+    "revoked": false,
+    "team": "epam"
+  },
+  "ggrudzinski-external": {
+    "name": "G. Grudzinski",
+    "revoked": false,
+    "team": "scor"
+  },
+  "srajput-external": {
+    "name": "S. Rajput",
+    "revoked": false,
+    "team": "epam"
+  },
+  "atordapilisi-external": {
+    "name": "A. Torda Pilisi",
+    "revoked": false,
+    "team": "scor"
+  },
+  "asaxena-external": {
+    "name": "A. Saxena",
+    "revoked": false,
+    "team": "epam"
+  },
+  "rapatel-external": {
+    "name": "R. Patel",
+    "revoked": false,
+    "team": "scor"
+  },
+  "lokiScor": {
+    "name": "LokiScor",
+    "revoked": false,
+    "team": "epam"
+  },
+  "u020848": {
+    "name": "User 020848",
+    "revoked": false,
+    "team": "scor"
+  },
+  "U021207": {
+    "name": "User 021207",
+    "revoked": false,
+    "team": "epam"
+  },
+  "gleclerc971": {
+    "name": "G. Leclerc",
+    "revoked": false,
+    "team": "scor"
+  },
+  "KKAWCZYNSKI-EXTERNAL-SCOR-COM": {
+    "name": "K. Kawczynski",
+    "revoked": false,
+    "team": "epam"
+  },
+  "usakirevupalle-external": {
+    "name": "usakirevupalle-external",
+    "revoked": false,
+    "team": "scor"
+  },
+  "ppatil-external": {
+    "name": "ppatil-external",
+    "revoked": false,
+    "team": "epam"
+  },
+  "akumark-external": {
+    "name": "akumark-external",
+    "revoked": false,
+    "team": "scor"
+  },
+  "U021260": {
+    "name": "U021260",
+    "revoked": false,
+    "team": "epam"
+  },
+  "vdasari36": {
+    "name": "vdasari36",
+    "revoked": false,
+    "team": "scor"
+  },
+  "U021208": {
+    "name": "U021208",
+    "revoked": false,
+    "team": "epam"
+  },
+  "zkirilov-external": {
+    "name": "zkirilov-external",
+    "revoked": false,
+    "team": "scor"
+  },
+  "snimase-external": {
+    "name": "snimase-external",
+    "revoked": false,
+    "team": "epam"
+  },
+  "gm-external": {
+    "name": "gm-external",
+    "revoked": false,
+    "team": "scor"
+  },
+  "rslathia-external": {
+    "name": "rslathia-external",
+    "revoked": false,
+    "team": "epam"
+  },
+  "U021137": {
+    "name": "U021137",
+    "revoked": false,
+    "team": "scor"
+  },
+  "tdash-external": {
+    "name": "tdash-external",
+    "revoked": false,
+    "team": "epam"
+  },
+  "sigupta-external": {
+    "name": "sigupta-external",
+    "revoked": false,
+    "team": "scor"
+  },
+  "akeshri-external": {
+    "name": "akeshri-external",
+    "revoked": false,
+    "team": "epam"
+  },
+  "ankumar-external": {
+    "name": "ankumar-external",
+    "revoked": false,
+    "team": "scor"
+  },
+  "U021118": {
+    "name": "U021118",
+    "revoked": false,
+    "team": "epam"
+  },
+  "U021291": {
+    "name": "U021291",
+    "revoked": false,
+    "team": "scor"
+  },
+  "nkoppula-external": {
+    "name": "nkoppula-external",
+    "revoked": false,
+    "team": "epam"
+  },
+  "gmajoros-external": {
+    "name": "gmajoros-external",
+    "revoked": false,
+    "team": "scor"
+  },
+  "subrat-scor": {
+    "name": "subrat-scor",
+    "revoked": false,
+    "team": "epam"
+  },
+  "rbabu-external": {
+    "name": "rbabu-external",
+    "revoked": false,
+    "team": "scor"
+  },
+  "siddhartha0901rawat": {
+    "name": "siddhartha0901rawat",
+    "revoked": false,
+    "team": "epam"
+  },
+  "SGOPI-EXTERNAL": {
+    "name": "SGOPI-EXTERNAL",
+    "revoked": false,
+    "team": "scor"
+  },
+  "saranshscor": {
+    "name": "saranshscor",
+    "revoked": false,
+    "team": "epam"
+  },
+  "U021139": {
+    "name": "U021139",
+    "revoked": false,
+    "team": "scor"
+  },
+  "akalluru-external1": {
+    "name": "akalluru-external1",
+    "revoked": false,
+    "team": "epam"
+  },
+  "swapna-komala": {
+    "name": "swapna-komala",
+    "revoked": false,
+    "team": "scor"
+  },
+  "amjohn-external": {
+    "name": "amjohn-external",
+    "revoked": false,
+    "team": "epam"
+  },
+  "nsolanki-external": {
+    "name": "nsolanki-external",
+    "revoked": false,
+    "team": "scor"
+  }
+}

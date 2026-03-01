@@ -25,30 +25,42 @@
                     <span class="stat-label">Total Interactions</span>
                     <span class="stat-value" id="stat-total-interactions">--</span>
                 </div>
+                <div class="stat-box glass" style="border-color: rgba(16, 185, 129, 0.3)">
+                    <span class="stat-label">Total LOC Edited</span>
+                    <span class="stat-value metric-high" id="stat-total-loc">--</span>
+                </div>
             </div>
         </header>
 
         <main class="single-layout">
             <!-- All Users -->
             <section class="card fame-card glass">
-                <div class="card-header">
-                    <h2>🏆 All Copilot Users</h2>
-                    <p>Sorted by Interactions</p>
+                <div class="card-header"
+                    style="display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem;">
+                    <div>
+                        <h2>🏆 All Copilot Users</h2>
+                        <p>Sorted by Interactions</p>
+                    </div>
+                    <select id="month-filter"
+                        style="padding: 0.5rem 1rem; border-radius: 8px; background: rgba(30, 41, 59, 0.8); color: white; border: 1px solid rgba(255, 255, 255, 0.2); cursor: pointer; font-size: 0.95rem; outline: none;">
+                        <option value="">All times</option>
+                    </select>
                 </div>
                 <div class="table-container">
                     <table class="data-table" id="users-table">
                         <thead>
                             <tr>
-                                <th>Rank</th>
+                                <th style="width: 1%; white-space: nowrap; text-align: center;">#</th>
                                 <th>User</th>
-                                <th>Interactions</th>
-                                <th>LOC Added</th>
-                                <th>LOC Deleted</th>
+                                <th>Coding</th>
+                                <th>Documenting</th>
+                                <th>Turns</th>
                                 <th>Accept Rate</th>
-                                <th>Fav Model</th>
-                                <th>Fav IDE</th>
+                                <th>Lang</th>
+                                <th>Model</th>
+                                <th>IDE</th>
                                 <th>Active Days</th>
-                                <th>Agent/Chat Days</th>
+                                <th>Last Active</th>
                             </tr>
                         </thead>
                         <tbody id="users-body">
