@@ -12,6 +12,11 @@ function formatNumber(num) {
     return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, "'");
 }
 
+function signedLoc(n) {
+    if (!n) return '0';
+    return (n > 0 ? '+' : '-') + formatNumber(Math.abs(n));
+}
+
 let currentMonthFilter = '';
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -314,6 +319,8 @@ function renderUsersTable() {
         });
     }
 
+    renderDonutSection(sortedUsers);
+
     sortedUsers.forEach((user, idx) => {
         const lineNumber = idx + 1;
         const tr = document.createElement('tr');
@@ -330,7 +337,7 @@ function renderUsersTable() {
         // <span style="font-size: 0.8em; color: var(--text-muted); font-weight: 400;">${user.team ? user.team + ' | ' : ''}${user.user_login}</span>
 
         tr.innerHTML = `
-            <td style="text-align: center; color: var(--text-muted); font-size: 0.9em;">
+            <td style="color: var(--text-muted); font-size: 0.9em;">
                 ${lineNumber}
             </td>
             <td>
@@ -344,7 +351,7 @@ function renderUsersTable() {
                 ${prev ? diffBadge(user.code_loc_changed, prev.code_loc_changed) : ''}
                 <br>
                 <span style="font-size:0.8em;color:var(--text-muted)">
-                    +${formatNumber(user.code_loc_added)} | -${formatNumber(user.code_loc_deleted)}
+                    ${signedLoc(user.code_loc_added)} | ${signedLoc(user.code_loc_deleted)}
                 </span>
             </td>
             <td style="white-space: nowrap; text-align: left;">
@@ -358,7 +365,7 @@ function renderUsersTable() {
                 ${prev ? diffArrowOnly(user.doc_loc_changed, prev.doc_loc_changed) : ''}
                 <br>
                 <span style="font-size:0.8em;color:var(--text-muted)">
-                    +${formatNumber(user.doc_loc_added)} | -${formatNumber(user.doc_loc_deleted)}
+                    ${signedLoc(user.doc_loc_added)} | ${signedLoc(user.doc_loc_deleted)}
                 </span>
             </td>
             <td style="white-space: nowrap;" title="${user.all_config_languages_list && user.all_config_languages_list.length ? 'Config languages: ' + user.all_config_languages_list.join(', ') : ''}">
@@ -366,7 +373,7 @@ function renderUsersTable() {
                 ${prev ? diffArrowOnly(user.config_loc_changed, prev.config_loc_changed) : ''}
                 <br>
                 <span style="font-size:0.8em;color:var(--text-muted)">
-                    +${formatNumber(user.config_loc_added)} | -${formatNumber(user.config_loc_deleted)}
+                    ${signedLoc(user.config_loc_added)} | ${signedLoc(user.config_loc_deleted)}
                 </span>
             </td>
             <td>
@@ -488,7 +495,8 @@ function computeDAU(users, days = 30) {
     return result;
 }
 
-function buildDAUChart(users) {
+function buildDAUChart(users, totalUsers) {
+    const total = totalUsers || users.length;
     const data = computeDAU(users, 31);
     if (!data.length) return '<p style="color:var(--text-muted)">No data available.</p>';
     const maxCount = Math.max(...data.map(d => d.count), 1);
@@ -496,16 +504,17 @@ function buildDAUChart(users) {
     let bars = '';
     for (const d of data) {
         const h = Math.round((d.count / maxCount) * chartH);
+        const pct = total > 0 ? Math.round((d.count / total) * 100) : 0;
         const parts = d.day.split('-');
         const label = parts[2] + '.' + parts[1];
         const dowStyle = d.isWeekend ? 'color:rgba(239,68,68,0.5)' : '';
         bars += `
-            <div class="bar-col-combined" title="${d.day}: ${d.count} active user${d.count !== 1 ? 's' : ''}">
+            <div class="bar-col-combined" title="${d.day}: ${d.count} active user${d.count !== 1 ? 's' : ''} (${pct}% of ${total})">
                 <div class="bar-area" style="height:${chartH}px">
                     <div class="bar-stack" style="height:${h}px">
                         <div class="bar-seg-dau" style="height:${h}px"></div>
                     </div>
-                    ${d.count ? `<div class="dau-count-label" style="bottom:${h + 3}px">${d.count}</div>` : ''}
+                    ${d.count ? `<div class="dau-count-label" style="bottom:${h + 3}px">${d.count}<br><span style="font-size:0.75em;opacity:0.65">${pct}%</span></div>` : ''}
                 </div>
                 <span class="bar-label">${label}<br><span style="${dowStyle}">${d.dow}</span></span>
             </div>`;
@@ -517,7 +526,7 @@ function renderDAUChart() {
     const container = document.getElementById('dau-chart-container');
     if (!container) return;
     if (!globalUsers.length) { container.innerHTML = ''; return; }
-    container.innerHTML = buildDAUChart(globalUsers);
+    container.innerHTML = buildDAUChart(globalUsers, globalUsers.length);
 }
 
 function buildCombinedChart(daily) {
@@ -586,5 +595,134 @@ function fillDailyGaps(daily) {
         allDays.push(entry);
     }
     return allDays;
+}
+
+// ── LOC Breakdown Donut Charts ──
+
+const DONUT_COLORS = [
+    '#818cf8', '#38bdf8', '#34d399', '#f59e0b',
+    '#f87171', '#a78bfa', '#fb923c', '#4ade80',
+    '#e879f9', '#94a3b8'
+];
+
+function buildDonutChart(locMap, title) {
+    const entries = Object.entries(locMap)
+        .map(([label, value]) => ({ label, value }))
+        .filter(d => d.value > 0)
+        .sort((a, b) => b.value - a.value);
+
+    if (!entries.length) {
+        return `<div class="donut-card glass"><h3 class="donut-title">${title}</h3><p class="donut-empty">No data</p></div>`;
+    }
+
+    const MAX = 8;
+    let segments = entries.slice(0, MAX);
+    if (entries.length > MAX) {
+        const rest = entries.slice(MAX).reduce((s, d) => s + d.value, 0);
+        segments.push({ label: 'Other', value: rest });
+    }
+
+    const total = segments.reduce((s, d) => s + d.value, 0);
+
+    // Geometry — circle centered at origin, viewBox gives label room on all sides
+    const r = 130, sw = 44;
+    const C = 2 * Math.PI * r;
+    const GAP = 2;
+    const outerR    = r + sw / 2;       // 152 — outer edge of ring
+    const kneeR     = outerR + 18;      // 170 — tip of radial leader
+    const elbowExt  = 26;               // horizontal run of elbow
+    const textOff   = 6;                // gap between elbow end and text
+
+    let svgSegs   = '';
+    let svgLabels = '';
+    let startDeg  = -90;                // degrees, top of circle
+    let startRad  = -Math.PI / 2;       // radians, matching startDeg
+
+    segments.forEach((d, i) => {
+        const pct        = d.value / total;
+        const pctDisplay = Math.round(pct * 100);
+        if (pctDisplay === 0) { startDeg += pct * 360; startRad += pct * 2 * Math.PI; return; }
+
+        const color   = DONUT_COLORS[i % DONUT_COLORS.length];
+        const dashLen = Math.max(0, pct * C - GAP);
+
+        const midRad = startRad + pct * Math.PI;
+        const cosA   = Math.cos(midRad);
+        const sinA   = Math.sin(midRad);
+
+        // Arc segment wrapped in <g> with <title> for native hover tooltip
+        svgSegs += `<g><title>${d.label}: ${pctDisplay}%</title><circle cx="0" cy="0" r="${r}" fill="none" stroke="${color}" stroke-width="${sw}" stroke-dasharray="${dashLen.toFixed(2)} ${C.toFixed(2)}" transform="rotate(${startDeg.toFixed(2)})" /></g>`;
+
+        // Percentage text on the ring for segments >= 5%
+        if (pctDisplay >= 5) {
+            const lx = r * cosA;
+            const ly = r * sinA;
+            svgSegs += `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle" dominant-baseline="central" fill="white" font-size="19" font-weight="700" font-family="Inter,sans-serif" pointer-events="none">${pctDisplay}%</text>`;
+        }
+
+        // Callout label (name only, truncated; full name available on hover via <title>)
+        if (pctDisplay >= 3) {
+            const sx = (outerR + 3) * cosA;
+            const sy = (outerR + 3) * sinA;
+            const kx = kneeR * cosA;
+            const ky = kneeR * sinA;
+
+            const isRight = cosA >= 0;
+            const ex      = kx + (isRight ? elbowExt : -elbowExt);
+            const ey      = ky;
+            const tx      = ex + (isRight ? textOff : -textOff);
+            const anchor  = isRight ? 'start' : 'end';
+
+            const shortLabel = d.label.length > 13 ? d.label.slice(0, 12) + '\u2026' : d.label;
+
+            svgLabels += `
+                <line x1="${sx.toFixed(1)}" y1="${sy.toFixed(1)}" x2="${kx.toFixed(1)}" y2="${ky.toFixed(1)}" stroke="${color}" stroke-width="1.3" opacity="0.5"/>
+                <line x1="${kx.toFixed(1)}" y1="${ky.toFixed(1)}" x2="${ex.toFixed(1)}" y2="${ey.toFixed(1)}" stroke="${color}" stroke-width="1.3" opacity="0.5"/>
+                <text x="${tx.toFixed(1)}" y="${ey.toFixed(1)}" text-anchor="${anchor}" dominant-baseline="central" fill="rgba(255,255,255,0.7)" font-size="12" font-family="Inter,sans-serif">
+                    <title>${d.label}: ${pctDisplay}%</title>${shortLabel}
+                </text>`;
+        }
+
+        startDeg += pct * 360;
+        startRad += pct * 2 * Math.PI;
+    });
+
+    // viewBox: ±(outerR + kneeRun + elbowExt + textOff + ~80px text) → ±270 → 540 total
+    return `<div class="donut-card glass">
+        <h3 class="donut-title">${title}</h3>
+        <svg class="donut-svg" viewBox="-270 -260 540 520" width="100%">
+            <circle cx="0" cy="0" r="${r}" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="${sw}" />
+            ${svgSegs}
+            ${svgLabels}
+        </svg>
+    </div>`;
+}
+
+function renderDonutSection(filteredUsers) {
+    const locByModel = {};
+    const locByLanguage = {};
+    const locByIde = {};
+
+    for (const u of filteredUsers) {
+        if (u.loc_by_model) {
+            for (const [m, loc] of Object.entries(u.loc_by_model)) {
+                locByModel[m] = (locByModel[m] || 0) + loc;
+            }
+        }
+        if (u.loc_by_language) {
+            for (const [l, loc] of Object.entries(u.loc_by_language)) {
+                locByLanguage[l] = (locByLanguage[l] || 0) + loc;
+            }
+        }
+        if (u.loc_by_ide) {
+            for (const [i, loc] of Object.entries(u.loc_by_ide)) {
+                locByIde[i] = (locByIde[i] || 0) + loc;
+            }
+        }
+    }
+
+    document.getElementById('donut-model').innerHTML    = buildDonutChart(locByModel,    'by Model');
+    document.getElementById('donut-language').innerHTML = buildDonutChart(locByLanguage, 'by Language');
+    document.getElementById('donut-ide').innerHTML      = buildDonutChart(locByIde,      'by IDE');
 }
 

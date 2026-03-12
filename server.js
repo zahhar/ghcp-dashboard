@@ -18,7 +18,7 @@ const mimeTypes = {
     '.svg': 'image/svg+xml'
 };
 
-const documentingLanguages = ['markdown', 'text', 'unknown', 'prompt', 'instructions', 'chatagent', 'mermaid', 'plaintext', 'others', 'bibtex', 'snippets', 'latex', 'restructuredtext', 'search-result', 'skill', 'tex'];
+const documentingLanguages = ['markdown', 'text', 'prompt', 'instructions', 'mermaid', 'plaintext', 'bibtex', 'snippets', 'latex', 'restructuredtext', 'search-result', 'skill', 'tex'];
 const configLanguages = ['csv', 'csv (semicolon)', 'dockercompose', 'dockerfile', 'dotenv', 'gitignore', 'ignore', 'ini', 'json', 'jsonc', 'jsonl', 'makefile', 'properties', 'spring-boot-properties', 'vscode', 'xml', 'yaml', 'code-text-binary', 'log'];
 
 function serveStaticFile(req, res) {
@@ -133,7 +133,10 @@ async function getAggregatedData(monthFilter = null) {
                     languages: {},
                     doc_languages: new Set(),
                     config_languages: new Set(),
-                    daily: {}
+                    code_loc_from_models: 0,
+                    daily: {},
+                    allLocByModel: {},
+                    allLocByLanguage: {}
                 };
             }
 
@@ -169,6 +172,7 @@ async function getAggregatedData(monthFilter = null) {
                         if (lfLoc > 0) stats.config_languages.add(lf.language);
                         entryConfigLoc += lfLoc;
                     }
+                    if (lfLoc > 0) stats.allLocByLanguage[lf.language || 'unknown'] = (stats.allLocByLanguage[lf.language || 'unknown'] || 0) + lfLoc;
                     entryTotalLoc += lfLoc;
                 }
                 if (entry.day && stats.daily[entry.day]) {
@@ -201,9 +205,14 @@ async function getAggregatedData(monthFilter = null) {
             if (Array.isArray(entry.totals_by_language_model)) {
                 for (const tm of entry.totals_by_language_model) {
                     const lang = (tm.language || 'unknown').toLowerCase();
+                    const allModelLoc = (tm.loc_added_sum || 0) + (tm.loc_deleted_sum || 0);
+                    if (tm.model && allModelLoc > 0) {
+                        stats.allLocByModel[tm.model] = (stats.allLocByModel[tm.model] || 0) + allModelLoc;
+                    }
                     if (documentingLanguages.includes(lang) || configLanguages.includes(lang)) continue;
 
                     const changedLoc = (tm.loc_added_sum || 0) + (tm.loc_deleted_sum || 0);
+                    stats.code_loc_from_models += changedLoc;
                     if (tm.model) {
                         stats.models[tm.model] = (stats.models[tm.model] || 0) + changedLoc;
                     }
@@ -262,7 +271,8 @@ async function getAggregatedData(monthFilter = null) {
                 favModel = m;
             }
         }
-        const favModelPct = codeLocChanged > 0 ? Math.round((favModelLoc / codeLocChanged) * 100) + '%' : '0%';
+        const codeLocFromModels = user.code_loc_from_models;
+        const favModelPct = codeLocFromModels > 0 ? Math.round((favModelLoc / codeLocFromModels) * 100) + '%' : '0%';
 
         let favIde = 'None';
         let favIdeLoc = 0;
@@ -283,7 +293,7 @@ async function getAggregatedData(monthFilter = null) {
                 favLanguage = l;
             }
         }
-        const favLanguagePct = codeLocChanged > 0 ? Math.round((favLanguageLoc / codeLocChanged) * 100) + '%' : '0%';
+        const favLanguagePct = codeLocFromModels > 0 ? Math.round((favLanguageLoc / codeLocFromModels) * 100) + '%' : '0%';
 
         // Map human name and revoked
         const mapping = userMapping[user.user_login] || {};
@@ -328,11 +338,16 @@ async function getAggregatedData(monthFilter = null) {
             daily: Object.entries(user.daily)
                 .sort(([a], [b]) => a.localeCompare(b))
                 .map(([day, d]) => ({ day, user_initiated: d.user_initiated, code_generation: d.code_generation, code_loc: d.code_loc, doc_loc: d.doc_loc, config_loc: d.config_loc })),
+            loc_by_model: user.allLocByModel,
+            loc_by_language: user.allLocByLanguage,
+            loc_by_ide: user.ides,
             models: undefined,
             ides: undefined,
             languages: undefined,
             doc_languages: undefined,
-            config_languages: undefined
+            config_languages: undefined,
+            allLocByModel: undefined,
+            allLocByLanguage: undefined
         };
     });
 

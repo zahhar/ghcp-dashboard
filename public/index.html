@@ -5,6 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GitHub Copilot Dashboard</title>
+    <link rel="icon" type="image/png" href="ghcp-logo.png">
     <link rel="stylesheet" href="styles.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
@@ -13,8 +14,11 @@
     <div class="dashboard-container">
         <header class="header">
             <div class="header-content">
-                <h1>GitHub Copilot Dashboard</h1>
-                <p class="subtitle">Insights into AI adoption</p>
+                <div style="display:flex;align-items:center;gap:0.75rem">
+                    <img src="ghcp-logo.png" alt="GitHub Copilot" style="height:5rem;width:auto">
+                    <h1>GitHub Copilot Dashboard</h1>
+                </div>
+                <p class="subtitle" style="margin-left: 5.75rem;">Insights into AI adoption</p>
             </div>
             <div class="header-stats">
                 <div class="stat-box gradient-purple">
@@ -39,7 +43,7 @@
             <!-- Daily Active Users -->
             <section class="card glass" id="dau-section">
                 <div class="card-header">
-                    <h2 style="color:var(--text-main)">Daily Active Users <span style="font-size:0.8em;font-weight:400;color:var(--text-muted)">· last 31 days</span></h2>
+                    <h2 style="color:var(--text-main)">Daily Active Users</h2>
                 </div>
                 <div id="dau-chart-container"></div>
             </section>
@@ -72,7 +76,7 @@
                     <table class="data-table" id="users-table">
                         <thead>
                             <tr>
-                                <th style="width: 1%; white-space: nowrap; text-align: center;">#</th>
+                                <th style="width: 1%; white-space: nowrap;">#</th>
                                 <th>User</th>
                                 <th>Code</th>
                                 <th>Perf</th>
@@ -90,6 +94,18 @@
                             <!-- Populated by JS -->
                         </tbody>
                     </table>
+                </div>
+            </section>
+
+            <!-- Output Breakdown -->
+            <section class="card glass">
+                <div class="card-header">
+                    <h2 style="color:var(--text-main)">Output Breakdown</h2>
+                </div>
+                <div class="donut-grid">
+                    <div id="donut-model"></div>
+                    <div id="donut-language"></div>
+                    <div id="donut-ide"></div>
                 </div>
             </section>
         </main>

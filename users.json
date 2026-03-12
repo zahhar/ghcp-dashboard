@@ -45,7 +45,7 @@
     "team": "mars"
   },
   "lady_mary_wortley_montagu": {
-    "name": "Lady Mary Wortley Montagu",
+    "name": "Mary Montagu",
     "team": "saturn"
   },
   "heinrich_heine": {
@@ -119,7 +119,7 @@
     "team": "uranus"
   },
   "johann_wolfgang_von_goethe": {
-    "name": "Johann Wolfgang von Goethe",
+    "name": "J. W. von Goethe",
     "revoked": false,
     "team": "mars"
   },
@@ -164,7 +164,7 @@
     "team": "titan"
   },
   "harriet_beecher_stowe": {
-    "name": "Harriet Beecher Stowe",
+    "name": "Harriet B. Stowe",
     "revoked": false,
     "team": "jupiter"
   },
@@ -184,7 +184,7 @@
     "team": "moon"
   },
   "elizabeth_barrett_browning": {
-    "name": "Elizabeth Barrett Browning",
+    "name": "Elizabeth B. Browning",
     "revoked": false,
     "team": "moon"
   },

@@ -86,7 +86,7 @@ async function fetchReportLinks(day) {
     const res = await httpsGet(url, {
         'Accept': 'application/vnd.github+json',
         'Authorization': `Bearer ${TOKEN}`,
-        'X-GitHub-Api-Version': '2022-11-28'
+        'X-GitHub-Api-Version': '2026-03-10'
     });
 
     if (res.status === 404) {
