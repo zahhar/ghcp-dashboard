@@ -13,38 +13,60 @@
     <div class="dashboard-container">
         <header class="header">
             <div class="header-content">
-                <h1>AI Copilot Dashboard</h1>
-                <p class="subtitle">Insights into engineering momentum and AI adoption</p>
+                <h1>GitHub Copilot Dashboard</h1>
+                <p class="subtitle">Insights into AI adoption</p>
             </div>
             <div class="header-stats">
                 <div class="stat-box gradient-purple">
                     <span class="stat-label">Total Users</span>
                     <span class="stat-value" id="stat-total-users">--</span>
+                    <span class="stat-diff" id="stat-diff-users"></span>
                 </div>
                 <div class="stat-box gradient-blue">
-                    <span class="stat-label">Total Interactions</span>
-                    <span class="stat-value" id="stat-total-interactions">--</span>
+                    <span class="stat-label">Total Turns</span>
+                    <span class="stat-value metric-high" id="stat-total-interactions">--</span>
+                    <span class="stat-diff" id="stat-diff-interactions"></span>
                 </div>
                 <div class="stat-box glass" style="border-color: rgba(16, 185, 129, 0.3)">
                     <span class="stat-label">Total LOC Edited</span>
-                    <span class="stat-value metric-high" id="stat-total-loc">--</span>
+                    <span class="stat-value" id="stat-total-loc">--</span>
+                    <span class="stat-diff" id="stat-diff-loc"></span>
                 </div>
             </div>
         </header>
 
         <main class="single-layout">
+            <!-- Daily Active Users -->
+            <section class="card glass" id="dau-section">
+                <div class="card-header">
+                    <h2 style="color:var(--text-main)">Daily Active Users <span style="font-size:0.8em;font-weight:400;color:var(--text-muted)">· last 31 days</span></h2>
+                </div>
+                <div id="dau-chart-container"></div>
+            </section>
             <!-- All Users -->
             <section class="card fame-card glass">
                 <div class="card-header"
                     style="display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem;">
-                    <div>
-                        <h2>🏆 All Copilot Users</h2>
-                        <p>Sorted by Interactions</p>
+                    <div style="flex: 1; min-width: 200px;">
+                        <input id="user-search" type="text" placeholder="🔍 Search users..."
+                            class="search-input" />
                     </div>
-                    <select id="month-filter"
-                        style="padding: 0.5rem 1rem; border-radius: 8px; background: rgba(30, 41, 59, 0.8); color: white; border: 1px solid rgba(255, 255, 255, 0.2); cursor: pointer; font-size: 0.95rem; outline: none;">
-                        <option value="">All times</option>
-                    </select>
+                    <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+                        <select id="status-filter"
+                            style="padding: 0.5rem 1rem; border-radius: 8px; background: rgba(30, 41, 59, 0.8); color: white; border: 1px solid rgba(255, 255, 255, 0.2); cursor: pointer; font-size: 0.95rem; outline: none;">
+                            <option value="">All users</option>
+                            <option value="active" selected>Active</option>
+                            <option value="revoked">Revoked</option>
+                        </select>
+                        <select id="team-filter"
+                            style="padding: 0.5rem 1rem; border-radius: 8px; background: rgba(30, 41, 59, 0.8); color: white; border: 1px solid rgba(255, 255, 255, 0.2); cursor: pointer; font-size: 0.95rem; outline: none;">
+                            <option value="">All teams</option>
+                        </select>
+                        <select id="month-filter"
+                            style="padding: 0.5rem 1rem; border-radius: 8px; background: rgba(30, 41, 59, 0.8); color: white; border: 1px solid rgba(255, 255, 255, 0.2); cursor: pointer; font-size: 0.95rem; outline: none;">
+                            <option value="">All times</option>
+                        </select>
+                    </div>
                 </div>
                 <div class="table-container">
                     <table class="data-table" id="users-table">
@@ -52,14 +74,15 @@
                             <tr>
                                 <th style="width: 1%; white-space: nowrap; text-align: center;">#</th>
                                 <th>User</th>
-                                <th>Coding</th>
-                                <th>Documenting</th>
+                                <th>Code</th>
+                                <th>Perf</th>
+                                <th>Doc</th>
+                                <th>Config</th>
                                 <th>Turns</th>
-                                <th>Accept Rate</th>
                                 <th>Lang</th>
                                 <th>Model</th>
                                 <th>IDE</th>
-                                <th>Active Days</th>
+                                <th>Days</th>
                                 <th>Last Active</th>
                             </tr>
                         </thead>
@@ -70,6 +93,16 @@
                 </div>
             </section>
         </main>
+    </div>
+    <!-- User detail popup -->
+    <div class="modal-overlay" id="user-modal" style="display:none;">
+        <div class="modal glass">
+            <div class="modal-header">
+                <h3 id="modal-title"></h3>
+                <button class="modal-close" id="modal-close">&times;</button>
+            </div>
+            <div class="modal-body" id="modal-body"></div>
+        </div>
     </div>
     <script src="app.js"></script>
 </body>

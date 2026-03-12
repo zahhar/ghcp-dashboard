@@ -97,6 +97,12 @@ body {
     font-weight: 700;
 }
 
+.stat-diff {
+    font-size: 0.8rem;
+    text-align: center;
+    min-height: 1.2em;
+}
+
 /* Glass Cards */
 .glass {
     background: var(--bg-card);
@@ -120,6 +126,7 @@ body {
 
 .card {
     padding: 2rem;
+    margin-bottom: 1.25rem;
     transition: all 0.3s ease;
 }
 
@@ -140,6 +147,58 @@ body {
     color: var(--text-muted);
     font-size: 0.95rem;
     margin-top: 0.25rem;
+}
+
+.search-input {
+    width: 100%;
+    padding: 0.6rem 1rem;
+    border-radius: 8px;
+    background: rgba(30, 41, 59, 0.8);
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    font-size: 1.1rem;
+    font-family: 'Inter', sans-serif;
+    outline: none;
+    transition: border-color 0.2s ease;
+}
+
+.search-input::placeholder {
+    color: var(--text-muted);
+}
+
+.search-input:focus {
+    border-color: rgba(56, 189, 248, 0.5);
+}
+
+.diff-badge {
+    display: inline-block;
+    font-size: 0.7em;
+    font-weight: 600;
+    padding: 1px 5px;
+    border-radius: 4px;
+    margin-left: 4px;
+    vertical-align: middle;
+}
+
+.diff-up {
+    color: #10b981;
+    background: rgba(16, 185, 129, 0.15);
+}
+
+.diff-down {
+    color: #ef4444;
+    background: rgba(239, 68, 68, 0.15);
+}
+
+.diff-neutral {
+    color: var(--text-muted);
+    background: rgba(148, 163, 184, 0.15);
+}
+
+.diff-new {
+    color: rgba(56, 189, 248, 0.6);
+    background: transparent;
+    border: 1px solid rgba(56, 189, 248, 0.4);
 }
 
 /* Tables */
@@ -260,13 +319,13 @@ body {
 
 /* Revoked user */
 .revoked-user {
-    opacity: 0.3;
-    filter: grayscale(100%);
-    background-color: rgba(255, 255, 255, 0.05);
+    opacity: 0.35;
+    filter: grayscale(80%) brightness(0.6);
 }
 
 .revoked-user:hover {
     opacity: 0.5;
+    filter: grayscale(60%) brightness(0.7);
 }
 
 /* Loading state */
@@ -274,4 +333,256 @@ body {
     text-align: center;
     padding: 3rem;
     color: var(--text-muted);
+}
+
+/* Clickable rows */
+.data-table tbody tr {
+    cursor: pointer;
+}
+
+/* Modal */
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: fadeIn 0.15s ease;
+}
+
+.modal {
+    width: min(60vw, 92vw);
+    max-height: 80vh;
+    padding: 1.5rem 2rem 2rem;
+    border-radius: 16px;
+    display: flex;
+    flex-direction: column;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.25rem;
+}
+
+.modal-header h3 {
+    font-size: 1.15rem;
+    font-weight: 600;
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1.5rem;
+    cursor: pointer;
+    line-height: 1;
+    padding: 0 0.25rem;
+}
+
+.modal-close:hover {
+    color: var(--text-main);
+}
+
+.modal-body {
+    overflow-x: auto;
+    overflow-y: auto;
+}
+
+/* Bar chart */
+.bar-chart {
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
+    height: 200px;
+    padding-top: 1rem;
+}
+
+.bar-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 24px;
+}
+
+.bar-stack {
+    width: 100%;
+    border-radius: 3px 3px 0 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column-reverse;
+}
+
+.bar-seg-user {
+    background: #818cf8;
+}
+
+.bar-seg-codegen {
+    background: #38bdf8;
+}
+
+.bar-seg-code {
+    background: #10b981;
+}
+
+.bar-seg-doc {
+    background: #f59e0b;
+}
+
+.bar-seg-config {
+    background: #64748b;
+}
+
+.bar-chart-loc {
+    height: 160px;
+}
+
+/* Combined chart */
+.combined-chart {
+    display: flex;
+    gap: 3px;
+    padding-top: 1.5rem;
+    overflow-x: auto;
+}
+
+.bar-col-combined {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 20px;
+}
+
+.bar-area {
+    position: relative;
+    width: 100%;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+}
+
+.bar-area .bar-stack {
+    width: 100%;
+    z-index: 1;
+}
+
+.loc-step {
+    position: absolute;
+    left: -2px;
+    right: -2px;
+    height: 0;
+    border-top: 3px solid rgba(255, 255, 255, 0.85);
+    z-index: 2;
+    pointer-events: auto;
+    filter: drop-shadow(0 0 3px rgba(255, 255, 255, 0.3));
+}
+
+.loc-val {
+    position: absolute;
+    bottom: 2px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 0.6rem;
+    color: rgba(255, 255, 255, 0.9);
+    white-space: nowrap;
+    pointer-events: none;
+}
+
+.legend-line {
+    display: inline-block;
+    width: 16px;
+    height: 3px;
+    background: rgba(255, 255, 255, 0.85);
+    border-radius: 1px;
+    margin-right: 4px;
+    vertical-align: middle;
+    box-shadow: 0 0 4px rgba(255, 255, 255, 0.3);
+}
+
+.chart-section-title {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-top: 1rem;
+    margin-bottom: 0.25rem;
+}
+
+.bar-label {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    margin-top: 4px;
+    white-space: nowrap;
+    text-align: center;
+}
+
+.bar-value {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    margin-bottom: 2px;
+}
+
+.chart-legend {
+    display: flex;
+    gap: 1.25rem;
+    margin-top: 0.75rem;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.legend-dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    margin-right: 4px;
+    vertical-align: middle;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.bar-seg-dau {
+    background: #34d399;
+    width: 100%;
+    border-radius: 3px 3px 0 0;
+}
+
+.dau-count-label {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 0.6rem;
+    color: rgba(255, 255, 255, 0.7);
+    white-space: nowrap;
+    pointer-events: none;
+}
+
+.user-meta-section {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.meta-row {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    line-height: 1.5;
+}
+
+.meta-label {
+    font-weight: 600;
+    color: var(--text-main);
+    margin-right: 0.4rem;
 }

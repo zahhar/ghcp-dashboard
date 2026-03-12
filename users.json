@@ -1,202 +1,226 @@
 {
-  "mkhan-external": {
-    "name": "M. Khan",
+  "sappho": {
+    "name": "Sappho",
     "revoked": false,
-    "team": "epam"
+    "team": "mercury"
   },
-  "ggrudzinski-external": {
-    "name": "G. Grudzinski",
+  "homer": {
+    "name": "Homer",
     "revoked": false,
-    "team": "scor"
+    "team": "mercury"
   },
-  "srajput-external": {
-    "name": "S. Rajput",
+  "murasaki_shikibu": {
+    "name": "Murasaki Shikibu",
     "revoked": false,
-    "team": "epam"
+    "team": "venus"
   },
-  "atordapilisi-external": {
-    "name": "A. Torda Pilisi",
+  "dante_alighieri": {
+    "name": "Dante Alighieri",
     "revoked": false,
-    "team": "scor"
+    "team": "mars"
   },
-  "asaxena-external": {
-    "name": "A. Saxena",
+  "sei_shonagon": {
+    "name": "Sei Shonagon",
     "revoked": false,
-    "team": "epam"
+    "team": "venus"
   },
-  "rapatel-external": {
-    "name": "R. Patel",
+  "li_bai": {
+    "name": "Li Bai",
     "revoked": false,
-    "team": "scor"
+    "team": "mars"
   },
-  "lokiScor": {
-    "name": "LokiScor",
+  "christine_de_pizan": {
+    "name": "Christine de Pizan",
     "revoked": false,
-    "team": "epam"
+    "team": "jupiter"
   },
-  "u020848": {
-    "name": "User 020848",
+  "du_fu": {
+    "name": "Du Fu",
     "revoked": false,
-    "team": "scor"
+    "team": "mars"
   },
-  "U021207": {
-    "name": "User 021207",
+  "mirabai": {
+    "name": "Mirabai",
     "revoked": false,
-    "team": "epam"
+    "team": "mars"
   },
-  "gleclerc971": {
-    "name": "G. Leclerc",
-    "revoked": false,
-    "team": "scor"
+  "lady_mary_wortley_montagu": {
+    "name": "Lady Mary Wortley Montagu",
+    "team": "saturn"
   },
-  "KKAWCZYNSKI-EXTERNAL-SCOR-COM": {
-    "name": "K. Kawczynski",
-    "revoked": false,
-    "team": "epam"
+  "heinrich_heine": {
+    "name": "Heinrich Heine",
+    "team": "uranus"
   },
-  "usakirevupalle-external": {
-    "name": "usakirevupalle-external",
-    "revoked": false,
-    "team": "scor"
+  "ban_zhao": {
+    "name": "Ban Zhao",
+    "team": "venus"
   },
-  "ppatil-external": {
-    "name": "ppatil-external",
-    "revoked": false,
-    "team": "epam"
+  "nizami_ganjavi": {
+    "name": "Nizami Ganjavi",
+    "team": "uranus"
   },
-  "akumark-external": {
-    "name": "akumark-external",
-    "revoked": false,
-    "team": "scor"
+  "jose_rizal": {
+    "name": "Jose Rizal",
+    "team": "neptune"
   },
-  "U021260": {
-    "name": "U021260",
-    "revoked": false,
-    "team": "epam"
+  "ada_lovelace": {
+    "name": "Ada Lovelace",
+    "team": "mars"
   },
-  "vdasari36": {
-    "name": "vdasari36",
+  "geoffrey_chaucer": {
+    "name": "Geoffrey Chaucer",
     "revoked": false,
-    "team": "scor"
+    "team": "mercury"
   },
-  "U021208": {
-    "name": "U021208",
+  "phillis_wheatley": {
+    "name": "Phillis Wheatley",
     "revoked": false,
-    "team": "epam"
+    "team": "mars"
   },
-  "zkirilov-external": {
-    "name": "zkirilov-external",
+  "miguel_de_cervantes": {
+    "name": "Miguel de Cervantes",
     "revoked": false,
-    "team": "scor"
+    "team": "pluto"
   },
-  "snimase-external": {
-    "name": "snimase-external",
+  "jane_austen": {
+    "name": "Jane Austen",
     "revoked": false,
-    "team": "epam"
+    "team": "uranus"
   },
-  "gm-external": {
-    "name": "gm-external",
+  "william_shakespeare": {
+    "name": "William Shakespeare",
     "revoked": false,
-    "team": "scor"
+    "team": "mars"
   },
-  "rslathia-external": {
-    "name": "rslathia-external",
+  "mary_shelley": {
+    "name": "Mary Shelley",
     "revoked": false,
-    "team": "epam"
+    "team": "uranus"
   },
-  "U021137": {
-    "name": "U021137",
+  "matsuo_basho": {
+    "name": "Matsuo Basho",
     "revoked": false,
-    "team": "scor"
+    "team": "mars"
   },
-  "tdash-external": {
-    "name": "tdash-external",
+  "george_sand": {
+    "name": "George Sand",
     "revoked": false,
-    "team": "epam"
+    "team": "neptune"
   },
-  "sigupta-external": {
-    "name": "sigupta-external",
+  "voltaire": {
+    "name": "Voltaire",
     "revoked": false,
-    "team": "scor"
+    "team": "moon"
   },
-  "akeshri-external": {
-    "name": "akeshri-external",
+  "emily_bronte": {
+    "name": "Emily Bronte",
     "revoked": false,
-    "team": "epam"
+    "team": "uranus"
   },
-  "ankumar-external": {
-    "name": "ankumar-external",
+  "johann_wolfgang_von_goethe": {
+    "name": "Johann Wolfgang von Goethe",
     "revoked": false,
-    "team": "scor"
+    "team": "mars"
   },
-  "U021118": {
-    "name": "U021118",
+  "charlotte_bronte": {
+    "name": "Charlotte Bronte",
     "revoked": false,
-    "team": "epam"
+    "team": "mars"
   },
-  "U021291": {
-    "name": "U021291",
+  "victor_hugo": {
+    "name": "Victor Hugo",
     "revoked": false,
-    "team": "scor"
+    "team": "mars"
   },
-  "nkoppula-external": {
-    "name": "nkoppula-external",
+  "emily_dickinson": {
+    "name": "Emily Dickinson",
     "revoked": false,
-    "team": "epam"
+    "team": "ceres"
   },
-  "gmajoros-external": {
-    "name": "gmajoros-external",
-    "revoked": false,
-    "team": "scor"
+  "edgar_allan_poe": {
+    "name": "Edgar Allan Poe",
+    "revoked": true,
+    "team": "pluto"
   },
-  "subrat-scor": {
-    "name": "subrat-scor",
+  "christina_rossetti": {
+    "name": "Christina Rossetti",
     "revoked": false,
-    "team": "epam"
+    "team": "mercury"
   },
-  "rbabu-external": {
-    "name": "rbabu-external",
+  "charles_dickens": {
+    "name": "Charles Dickens",
     "revoked": false,
-    "team": "scor"
+    "team": "jupiter"
   },
-  "siddhartha0901rawat": {
-    "name": "siddhartha0901rawat",
+  "louisa_may_alcott": {
+    "name": "Louisa May Alcott",
     "revoked": false,
-    "team": "epam"
+    "team": "europa"
   },
-  "SGOPI-EXTERNAL": {
-    "name": "SGOPI-EXTERNAL",
+  "alexander_pushkin": {
+    "name": "Alexander Pushkin",
     "revoked": false,
-    "team": "scor"
+    "team": "titan"
   },
-  "saranshscor": {
-    "name": "saranshscor",
+  "harriet_beecher_stowe": {
+    "name": "Harriet Beecher Stowe",
     "revoked": false,
-    "team": "epam"
+    "team": "jupiter"
   },
-  "U021139": {
-    "name": "U021139",
-    "revoked": false,
-    "team": "scor"
+  "leo_tolstoy": {
+    "name": "Leo Tolstoy",
+    "revoked": true,
+    "team": "mars"
   },
-  "akalluru-external1": {
-    "name": "akalluru-external1",
+  "george_eliot": {
+    "name": "George Eliot",
     "revoked": false,
-    "team": "epam"
+    "team": "mercury"
   },
-  "swapna-komala": {
-    "name": "swapna-komala",
+  "fyodor_dostoevsky": {
+    "name": "Fyodor Dostoevsky",
     "revoked": false,
-    "team": "scor"
+    "team": "moon"
   },
-  "amjohn-external": {
-    "name": "amjohn-external",
+  "elizabeth_barrett_browning": {
+    "name": "Elizabeth Barrett Browning",
     "revoked": false,
-    "team": "epam"
+    "team": "moon"
   },
-  "nsolanki-external": {
-    "name": "nsolanki-external",
+  "walt_whitman": {
+    "name": "Walt Whitman",
+    "revoked": true,
+    "team": "mercury"
+  },
+  "selma_lagerlof": {
+    "name": "Selma Lagerlof",
     "revoked": false,
-    "team": "scor"
+    "team": "sun"
+  },
+  "rabindranath_tagore": {
+    "name": "Rabindranath Tagore",
+    "revoked": false,
+    "team": "mercury"
+  },
+  "tarabai_shinde": {
+    "name": "Tarabai Shinde",
+    "revoked": false,
+    "team": "neptune"
+  },
+  "mark_twain": {
+    "name": "Mark Twain",
+    "revoked": false,
+    "team": "mercury"
+  },
+  "qiu_jin": {
+    "name": "Qiu Jin",
+    "revoked": false,
+    "team": "uranus"
+  },
+  "oscar_wilde": {
+    "name": "Oscar Wilde",
+    "revoked": false,
+    "team": "earth"
   }
 }
