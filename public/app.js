@@ -1,5 +1,5 @@
 let globalUsers = [];
-let currentSortColumn = 'code_loc_changed';
+let currentSortColumn = 'total_loc_changed';
 let currentSortDesc = true;
 let currentTeamFilter = '';
 let currentSearchQuery = '';
@@ -12,9 +12,10 @@ function formatNumber(num) {
     return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, "'");
 }
 
-function signedLoc(n) {
+// sign: +1 for added (show +N), -1 for deleted (show -N); zero is always unsigned
+function signedLoc(n, sign) {
     if (!n) return '0';
-    return (n > 0 ? '+' : '-') + formatNumber(Math.abs(n));
+    return (sign < 0 ? '-' : '+') + formatNumber(n);
 }
 
 let currentMonthFilter = '';
@@ -31,6 +32,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('team-filter').addEventListener('change', (e) => {
         currentTeamFilter = e.target.value;
         renderUsersTable();
+        renderDAUChart();
     });
 
     document.getElementById('status-filter').addEventListener('change', (e) => {
@@ -96,7 +98,7 @@ async function fetchDashboardData(month = '') {
 
     } catch (error) {
         console.error('Error fetching stats:', error);
-        document.getElementById('users-body').innerHTML = `<tr><td colspan="11" class="loading">Failed to load data. Make sure backend is running.</td></tr>`;
+        document.getElementById('users-body').innerHTML = `<tr><td colspan="12" class="loading">Failed to load data. Make sure backend is running.</td></tr>`;
     }
 }
 
@@ -139,11 +141,11 @@ function setupTableSorting() {
     const sortMapping = {
         0: null, // # is not sortable
         1: 'human_name',
-        2: 'code_loc_changed',
-        3: 'avg_loc_added_daily',
+        2: 'total_loc_changed',
+        3: 'turns',
         4: 'doc_loc_changed',
-        5: 'config_loc_changed',
-        6: 'turns',
+        5: 'code_loc_changed',
+        6: 'perf_score',
         7: 'favorite_language',
         8: 'favorite_model',
         9: 'favorite_ide',
@@ -277,11 +279,11 @@ function renderUsersTable() {
     }
 
     // Update header stats to reflect current filter
-    const filteredLocChanged = sortedUsers.reduce((acc, u) => acc + u.total_loc_changed, 0);
+    const filteredOutput = sortedUsers.reduce((acc, u) => acc + u.total_suggested_changed + u.total_loc_changed, 0);
     const filteredInteractions = sortedUsers.reduce((acc, u) => acc + u.turns, 0);
     document.getElementById('stat-total-users').textContent = formatNumber(sortedUsers.length);
     document.getElementById('stat-total-interactions').textContent = formatNumber(filteredInteractions);
-    document.getElementById('stat-total-loc').textContent = formatNumber(filteredLocChanged);
+    document.getElementById('stat-total-loc').textContent = formatNumber(filteredOutput);
 
     // Update header diff badges — compute prev totals from same filtered user set
     let prevFilteredUsers = 0, prevFilteredInteractions = 0, prevFilteredLoc = 0;
@@ -291,13 +293,13 @@ function renderUsersTable() {
             if (p) {
                 prevFilteredUsers++;
                 prevFilteredInteractions += p.turns || 0;
-                prevFilteredLoc += (p.code_loc_changed || 0) + (p.doc_loc_changed || 0) + (p.config_loc_changed || 0);
+                prevFilteredLoc += (p.total_suggested_changed || 0) + (p.total_loc_changed || 0);
             }
         }
     }
     document.getElementById('stat-diff-users').innerHTML = prevMonthStats ? diffAbsBadge(sortedUsers.length, prevFilteredUsers) : '';
     document.getElementById('stat-diff-interactions').innerHTML = prevMonthStats ? diffBadge(filteredInteractions, prevFilteredInteractions, true) : '';
-    document.getElementById('stat-diff-loc').innerHTML = prevMonthStats ? diffBadge(filteredLocChanged, prevFilteredLoc, true) : '';
+    document.getElementById('stat-diff-loc').innerHTML = prevMonthStats ? diffBadge(filteredOutput, prevFilteredLoc, true) : '';
 
     // Sort logic
     if (currentSortColumn !== 'rank') {
@@ -343,55 +345,57 @@ function renderUsersTable() {
             <td>
                 <div class="user-cell" style="white-space: nowrap; flex-direction: column; align-items: flex-start; gap: 0.1rem;">
                     <span style="font-weight: 600;">${user.human_name}${revokedMark}${newUserMark}</span>
+                    <span style="font-size: 0.8em; color: var(--text-muted); font-weight: 400;">${user.user_login}</span>
                     <span style="font-size: 0.8em; color: var(--text-muted); font-weight: 400;">${user.team || ''}</span>
                 </div>
             </td>
-            <td style="white-space: nowrap;">
-                ${formatNumber(user.code_loc_changed)}
-                ${prev ? diffBadge(user.code_loc_changed, prev.code_loc_changed) : ''}
+            <!-- Output: grand total (suggested+applied) | 💡 suggested LOC | ✏️ applied LOC -->
+            <td style="white-space: nowrap;" title="Grand total = suggested + applied LOC&#10;💡 Suggested LOC = loc_suggested_to_add + loc_suggested_to_delete&#10;✏️ Applied LOC = loc_added + loc_deleted">
+                ${formatNumber(user.total_suggested_changed + user.total_loc_changed)}
                 <br>
-                <span style="font-size:0.8em;color:var(--text-muted)">
-                    ${signedLoc(user.code_loc_added)} | ${signedLoc(user.code_loc_deleted)}
-                </span>
+                <span style="font-size:0.8em;color:var(--text-muted)">💡 ${formatNumber(user.total_suggested_changed)}</span>
+                <br>
+                <span style="font-size:0.8em;color:var(--text-muted)">✏️ ${formatNumber(user.total_loc_changed)}</span>
             </td>
-            <td style="white-space: nowrap; text-align: left;">
-                <span class="metric-high">${formatNumber(user.avg_loc_added_daily)}</span>
-                ${prev ? diffBadge(user.avg_loc_added_daily, prev.avg_loc_added_daily, true) : ''}
+            <!-- Turns: total interactions | 🏃 output LOC per turn | 🎯 acceptance rate -->
+            <td title="Total interaction turns&#10;🏃 Output LOC per turn (suggested + applied)&#10;🎯 Acceptance Rate: code_acceptance_activity / code_generation_activity">
+                <span style="font-size: 1.1em;">${formatNumber(user.turns)}</span>
+                ${prev ? diffBadge(user.turns, prev.turns, true) : ''}
                 <br>
-                <span style="font-size:0.75em;color:var(--text-muted);font-weight:400">loc/day</span>
+                <span style="font-size:0.8em;color:var(--text-muted)">${user.turns > 0 ? '🏃\u202f' + formatNumber(Math.round((user.total_suggested_changed + user.total_loc_changed) / user.turns)) : '🏃 —'}</span>
+                <br>
+                <span style="font-size:0.8em;color:var(--text-muted)">🎯 ${user.acceptance_rate}</span>
             </td>
             <td style="white-space: nowrap;" title="${user.all_doc_languages_list && user.all_doc_languages_list.length ? 'Doc languages: ' + user.all_doc_languages_list.join(', ') : ''}">
                 ${formatNumber(user.doc_loc_changed)}
                 ${prev ? diffArrowOnly(user.doc_loc_changed, prev.doc_loc_changed) : ''}
                 <br>
-                <span style="font-size:0.8em;color:var(--text-muted)">
-                    ${signedLoc(user.doc_loc_added)} | ${signedLoc(user.doc_loc_deleted)}
-                </span>
-            </td>
-            <td style="white-space: nowrap;" title="${user.all_config_languages_list && user.all_config_languages_list.length ? 'Config languages: ' + user.all_config_languages_list.join(', ') : ''}">
-                ${formatNumber(user.config_loc_changed)}
-                ${prev ? diffArrowOnly(user.config_loc_changed, prev.config_loc_changed) : ''}
+                <span style="font-size:0.8em;color:var(--text-muted)">${signedLoc(user.doc_loc_added, 1)}</span>
                 <br>
-                <span style="font-size:0.8em;color:var(--text-muted)">
-                    ${signedLoc(user.config_loc_added)} | ${signedLoc(user.config_loc_deleted)}
-                </span>
+                <span style="font-size:0.8em;color:var(--text-muted)">${signedLoc(user.doc_loc_deleted, -1)}</span>
             </td>
-            <td>
-                <span style="font-size: 1.1em;">${formatNumber(user.turns)}</span>
-                ${prev ? diffBadge(user.turns, prev.turns, true) : ''}
+            <td style="white-space: nowrap;">
+                ${formatNumber(user.code_loc_changed)}
+                ${prev ? diffBadge(user.code_loc_changed, prev.code_loc_changed) : ''}
                 <br>
-                <span style="font-size:0.8em;color:var(--text-muted)">🎯 ${user.acceptance_rate}</span>
+                <span style="font-size:0.8em;color:var(--text-muted)">${signedLoc(user.code_loc_added, 1)}</span>
+                <br>
+                <span style="font-size:0.8em;color:var(--text-muted)">${signedLoc(user.code_loc_deleted, -1)}</span>
             </td>
-            <td style="white-space: nowrap;" title="${user.all_languages_list && user.all_languages_list.length ? 'Languages: ' + user.all_languages_list.join(', ') : ''}">${user.favorite_language}</td>
-            <td style="white-space: nowrap;" title="${user.all_models_list && user.all_models_list.length ? 'Models: ' + user.all_models_list.join(', ') : ''}">${user.favorite_model}</td>
+            <td style="white-space: nowrap;" title="PERF = max(code added, code deleted) / active days&#10;${formatNumber(user.perf_score)} loc/day">
+                <span class="metric-high">${formatNumber(user.perf_score)}</span>
+                ${prev ? diffBadge(user.perf_score, prev.perf_score, true) : ''}
+            </td>
+            <td style="max-width: 7rem;" title="${user.all_languages_list && user.all_languages_list.length ? 'Languages: ' + user.all_languages_list.join(', ') : ''}">${user.favorite_language}</td>
+            <td style="max-width: 8rem; overflow-wrap: break-word;" title="${user.all_models_list && user.all_models_list.length ? 'Models: ' + user.all_models_list.join(', ') : ''}">${user.favorite_model}</td>
             <td style="white-space: nowrap;" title="${user.all_ides_list && user.all_ides_list.length ? 'IDEs: ' + user.all_ides_list.join(', ') : ''}">${user.favorite_ide}</td>
             <td>
                 ${user.active_days_count}
                 ${prev ? diffAbsBadge(user.active_days_count, prev.active_days_count) : ''}
                 <br>
-                <span style="font-size:0.8em;color:var(--text-muted)">
-                    🤖 ${user.agent_days_count} | 💬 ${user.chat_days_count}
-                </span>
+                <span style="font-size:0.8em;color:var(--text-muted)">🤖 ${user.agent_days_count}</span>
+                <br>
+                <span style="font-size:0.8em;color:var(--text-muted)">💬 ${user.chat_days_count}</span>
             </td>
             <td style="color:var(--text-muted); font-size: 0.9em; white-space: nowrap;">${getFriendlyDate(user.last_active_day)}</td>
         `;
@@ -434,7 +438,7 @@ function buildUserMetaSection(user) {
 
 function openUserModal(user) {
     const overlay = document.getElementById('user-modal');
-    let titleHTML = user.human_name + (user.team ? '  ·  ' + user.team : '');
+    let titleHTML = user.human_name + (user.team ? '  ·  ' + user.team : '') + `  ·  <span style="font-size:0.8em;color:var(--text-muted);font-weight:400">${user.user_login}</span>`;
     const ideParts = [];
     if (user.last_ide_name) {
         ideParts.push(user.last_ide_version ? `${user.last_ide_name} ${user.last_ide_version}` : user.last_ide_name);
@@ -448,7 +452,7 @@ function openUserModal(user) {
         titleHTML += `<span style="font-size:0.8em;color:var(--text-muted);font-weight:400">  ·  ${ideParts.join(', ')}</span>`;
     }
     document.getElementById('modal-title').innerHTML = titleHTML;
-    document.getElementById('modal-body').innerHTML = buildCombinedChart(user.daily || []) + buildUserMetaSection(user);
+    document.getElementById('modal-body').innerHTML = buildCombinedChart(user.daily || [], currentMonthFilter) + buildUserMetaSection(user);
     overlay.style.display = 'flex';
 
     function close() {
@@ -467,7 +471,7 @@ function openUserModal(user) {
 
 // ── Daily Active Users chart ──
 
-function computeDAU(users, days = 30) {
+function computeDAU(users, days = 30, month = '') {
     const dayNames = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
     const dayCountMap = {};
     for (const u of users) {
@@ -477,27 +481,47 @@ function computeDAU(users, days = 30) {
             }
         }
     }
-    const allDays = Object.keys(dayCountMap).sort();
-    if (!allDays.length) return [];
-    const endDate = new Date(allDays[allDays.length - 1] + 'T00:00:00');
+
     const result = [];
-    for (let i = days - 1; i >= 0; i--) {
-        const dt = new Date(endDate);
-        dt.setDate(endDate.getDate() - i);
-        const iso = localISODate(dt);
-        result.push({
-            day: iso,
-            count: dayCountMap[iso] || 0,
-            dow: dayNames[dt.getDay()],
-            isWeekend: dt.getDay() === 0 || dt.getDay() === 6
-        });
+
+    if (month) {
+        // Show every calendar day of the selected month
+        const [yyyy, mm] = month.split('-').map(Number);
+        const daysInMonth = new Date(yyyy, mm, 0).getDate(); // day 0 of next month = last day of this month
+        for (let d = 1; d <= daysInMonth; d++) {
+            const dt = new Date(yyyy, mm - 1, d);
+            const iso = localISODate(dt);
+            result.push({
+                day: iso,
+                count: dayCountMap[iso] || 0,
+                dow: dayNames[dt.getDay()],
+                isWeekend: dt.getDay() === 0 || dt.getDay() === 6
+            });
+        }
+    } else {
+        // All-time: last 30 days counting back from the latest day that has any data
+        const allDays = Object.keys(dayCountMap).sort();
+        if (!allDays.length) return [];
+        const endDate = new Date(allDays[allDays.length - 1] + 'T00:00:00');
+        for (let i = days - 1; i >= 0; i--) {
+            const dt = new Date(endDate);
+            dt.setDate(endDate.getDate() - i);
+            const iso = localISODate(dt);
+            result.push({
+                day: iso,
+                count: dayCountMap[iso] || 0,
+                dow: dayNames[dt.getDay()],
+                isWeekend: dt.getDay() === 0 || dt.getDay() === 6
+            });
+        }
     }
+
     return result;
 }
 
-function buildDAUChart(users, totalUsers) {
+function buildDAUChart(users, totalUsers, month) {
     const total = totalUsers || users.length;
-    const data = computeDAU(users, 31);
+    const data = computeDAU(users, 30, month || '');
     if (!data.length) return '<p style="color:var(--text-muted)">No data available.</p>';
     const maxCount = Math.max(...data.map(d => d.count), 1);
     const chartH = 120;
@@ -526,15 +550,30 @@ function renderDAUChart() {
     const container = document.getElementById('dau-chart-container');
     if (!container) return;
     if (!globalUsers.length) { container.innerHTML = ''; return; }
-    container.innerHTML = buildDAUChart(globalUsers, globalUsers.length);
+    const filteredUsers = currentTeamFilter ? globalUsers.filter(u => u.team === currentTeamFilter) : globalUsers;
+    container.innerHTML = buildDAUChart(filteredUsers, filteredUsers.length, currentMonthFilter);
+    const avgStat = document.getElementById('dau-avg-stat');
+    if (avgStat) {
+        const data = computeDAU(filteredUsers, 30, currentMonthFilter);
+        const activeBizDays = data.filter(d => !d.isWeekend && d.count > 0);
+        if (activeBizDays.length) {
+            const total = filteredUsers.length;
+            const sum = activeBizDays.reduce((s, d) => s + d.count, 0);
+            const avg = Math.round(sum / activeBizDays.length);
+            const pct = total > 0 ? Math.round(avg / total * 100) : 0;
+            avgStat.innerHTML = `<span style="font-size:0.7rem;color:var(--text-main);text-transform:uppercase;letter-spacing:0.2px;font-weight:600">Average</span><br><span style="font-size:0.95rem;color:var(--text-muted);font-weight:400">${avg}&thinsp;&middot;&thinsp;${pct}%</span>`;
+        } else {
+            avgStat.innerHTML = '';
+        }
+    }
 }
 
-function buildCombinedChart(daily) {
-    if (!daily.length) return '<p style="color:var(--text-muted)">No daily data available.</p>';
+function buildCombinedChart(daily, month) {
+    if (!daily.length && !month) return '<p style="color:var(--text-muted)">No daily data available.</p>';
 
-    const allDays = fillDailyGaps(daily);
+    const allDays = fillDailyGaps(daily, month);
 
-    const maxLoc = Math.max(...allDays.map(d => (d.code_loc||0) + (d.doc_loc||0) + (d.config_loc||0)), 1);
+    const maxLoc = Math.max(...allDays.map(d => (d.code_loc||0) + (d.doc_loc||0)), 1);
     const maxTurns = Math.max(...allDays.map(d => d.user_initiated + d.code_generation), 1);
     const chartH = 170;
 
@@ -542,8 +581,7 @@ function buildCombinedChart(daily) {
     for (const d of allDays) {
         const codeLoc = d.code_loc || 0;
         const docLoc = d.doc_loc || 0;
-        const configLoc = d.config_loc || 0;
-        const totalLoc = codeLoc + docLoc + configLoc;
+        const totalLoc = codeLoc + docLoc;
         const locBottom = Math.round((totalLoc / maxLoc) * chartH);
 
         const turnsTotal = d.user_initiated + d.code_generation;
@@ -554,7 +592,7 @@ function buildCombinedChart(daily) {
         const label = parts[2] + '.' + parts[1];
         const dowStyle = d.isWeekend ? 'color:rgba(239,68,68,0.5)' : '';
 
-        const locTitle = `LOC: ${formatNumber(totalLoc)} (Code: ${formatNumber(codeLoc)}, Doc: ${formatNumber(docLoc)}, Config: ${formatNumber(configLoc)})`;
+        const locTitle = `LOC: ${formatNumber(totalLoc)} (Code: ${formatNumber(codeLoc)}, Doc: ${formatNumber(docLoc)})`;
         const turnsTitle = `Turns: ${turnsTotal} (User: ${d.user_initiated}, CodeGen: ${d.code_generation})`;
 
         bars += `
@@ -575,24 +613,42 @@ function buildCombinedChart(daily) {
         <div class="chart-legend">
             <span><span class="legend-dot" style="background:#818cf8"></span>Chat asks</span>
             <span><span class="legend-dot" style="background:#38bdf8"></span>Agent runs</span>
-            <span style="margin-left:0.5rem;padding-left:0.75rem;border-left:1px solid rgba(255,255,255,0.1)"><span class="legend-line"></span>LOC changed</span>
+            <span style="margin-left:0.5rem;padding-left:0.75rem;border-left:1px solid rgba(255,255,255,0.1)"><span class="legend-line"></span>Total LOC coding</span>
         </div>`;
 }
 
-function fillDailyGaps(daily) {
+function fillDailyGaps(daily, month) {
     const dayMap = {};
     for (const d of daily) dayMap[d.day] = d;
-
-    const startDate = new Date(daily[0].day + 'T00:00:00');
-    const endDate = new Date(daily[daily.length - 1].day + 'T00:00:00');
-    const allDays = [];
     const dayNames = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
-    for (let dt = new Date(startDate); dt <= endDate; dt.setDate(dt.getDate() + 1)) {
-        const iso = localISODate(dt);
-        const entry = dayMap[iso] || { day: iso, user_initiated: 0, code_generation: 0, code_loc: 0, doc_loc: 0, config_loc: 0 };
-        entry.dow = dayNames[dt.getDay()];
-        entry.isWeekend = dt.getDay() === 0 || dt.getDay() === 6;
-        allDays.push(entry);
+    const allDays = [];
+
+    if (month) {
+        // Show every calendar day of the selected month
+        const [yyyy, mm] = month.split('-').map(Number);
+        const daysInMonth = new Date(yyyy, mm, 0).getDate();
+        for (let day = 1; day <= daysInMonth; day++) {
+            const dt = new Date(yyyy, mm - 1, day);
+            const iso = localISODate(dt);
+            const entry = dayMap[iso] || { day: iso, user_initiated: 0, code_generation: 0, code_loc: 0, doc_loc: 0 };
+            entry.dow = dayNames[dt.getDay()];
+            entry.isWeekend = dt.getDay() === 0 || dt.getDay() === 6;
+            allDays.push(entry);
+        }
+    } else {
+        // All-time: last 30 days counting back from the latest day with data
+        if (!daily.length) return [];
+        const sortedDays = [...daily].sort((a, b) => a.day.localeCompare(b.day));
+        const endDate = new Date(sortedDays[sortedDays.length - 1].day + 'T00:00:00');
+        for (let i = 29; i >= 0; i--) {
+            const dt = new Date(endDate);
+            dt.setDate(endDate.getDate() - i);
+            const iso = localISODate(dt);
+            const entry = dayMap[iso] || { day: iso, user_initiated: 0, code_generation: 0, code_loc: 0, doc_loc: 0 };
+            entry.dow = dayNames[dt.getDay()];
+            entry.isWeekend = dt.getDay() === 0 || dt.getDay() === 6;
+            allDays.push(entry);
+        }
     }
     return allDays;
 }
@@ -605,7 +661,8 @@ const DONUT_COLORS = [
     '#e879f9', '#94a3b8'
 ];
 
-function buildDonutChart(locMap, title) {
+function buildDonutChart(locMap, title, splitFn) {
+    if (!splitFn) splitFn = label => label.split('_');
     const entries = Object.entries(locMap)
         .map(([label, value]) => ({ label, value }))
         .filter(d => d.value > 0)
@@ -673,13 +730,19 @@ function buildDonutChart(locMap, title) {
             const tx      = ex + (isRight ? textOff : -textOff);
             const anchor  = isRight ? 'start' : 'end';
 
-            const shortLabel = d.label.length > 13 ? d.label.slice(0, 12) + '\u2026' : d.label;
+            const parts = splitFn(d.label);
+            const lineH = 13; // px between tspan lines
+            const totalH = (parts.length - 1) * lineH;
+            const tspans = parts.map((p, pi) => {
+                const dy = pi === 0 ? (-totalH / 2).toFixed(1) : lineH;
+                return `<tspan x="${tx.toFixed(1)}" dy="${dy}">${p}</tspan>`;
+            }).join('');
 
             svgLabels += `
                 <line x1="${sx.toFixed(1)}" y1="${sy.toFixed(1)}" x2="${kx.toFixed(1)}" y2="${ky.toFixed(1)}" stroke="${color}" stroke-width="1.3" opacity="0.5"/>
                 <line x1="${kx.toFixed(1)}" y1="${ky.toFixed(1)}" x2="${ex.toFixed(1)}" y2="${ey.toFixed(1)}" stroke="${color}" stroke-width="1.3" opacity="0.5"/>
                 <text x="${tx.toFixed(1)}" y="${ey.toFixed(1)}" text-anchor="${anchor}" dominant-baseline="central" fill="rgba(255,255,255,0.7)" font-size="12" font-family="Inter,sans-serif">
-                    <title>${d.label}: ${pctDisplay}%</title>${shortLabel}
+                    <title>${d.label}: ${pctDisplay}%</title>${tspans}
                 </text>`;
         }
 
@@ -700,8 +763,12 @@ function buildDonutChart(locMap, title) {
 
 function renderDonutSection(filteredUsers) {
     const locByModel = {};
-    const locByLanguage = {};
+    const locByCodeLanguage = {};
+    const locByDocLanguage = {};
     const locByIde = {};
+    const locByFeature = {};
+    let totalCodeLoc = 0;
+    let totalDocLoc = 0;
 
     for (const u of filteredUsers) {
         if (u.loc_by_model) {
@@ -709,9 +776,14 @@ function renderDonutSection(filteredUsers) {
                 locByModel[m] = (locByModel[m] || 0) + loc;
             }
         }
-        if (u.loc_by_language) {
-            for (const [l, loc] of Object.entries(u.loc_by_language)) {
-                locByLanguage[l] = (locByLanguage[l] || 0) + loc;
+        if (u.loc_by_code_language) {
+            for (const [l, loc] of Object.entries(u.loc_by_code_language)) {
+                locByCodeLanguage[l] = (locByCodeLanguage[l] || 0) + loc;
+            }
+        }
+        if (u.loc_by_doc_language) {
+            for (const [l, loc] of Object.entries(u.loc_by_doc_language)) {
+                locByDocLanguage[l] = (locByDocLanguage[l] || 0) + loc;
             }
         }
         if (u.loc_by_ide) {
@@ -719,10 +791,25 @@ function renderDonutSection(filteredUsers) {
                 locByIde[i] = (locByIde[i] || 0) + loc;
             }
         }
+        if (u.loc_by_feature) {
+            for (const [f, loc] of Object.entries(u.loc_by_feature)) {
+                locByFeature[f] = (locByFeature[f] || 0) + loc;
+            }
+        }
+        totalCodeLoc += (u.code_loc_changed || 0);
+        totalDocLoc  += (u.doc_loc_changed  || 0);
     }
 
-    document.getElementById('donut-model').innerHTML    = buildDonutChart(locByModel,    'by Model');
-    document.getElementById('donut-language').innerHTML = buildDonutChart(locByLanguage, 'by Language');
-    document.getElementById('donut-ide').innerHTML      = buildDonutChart(locByIde,      'by IDE');
+    const locByActivity = {};
+    if (totalCodeLoc > 0) locByActivity['Coding']   = totalCodeLoc;
+    if (totalDocLoc  > 0) locByActivity['Steering'] = totalDocLoc;
+
+    const splitModelLabel = label => { const f = label.indexOf('-'); if (f === -1) return [label]; const s = label.indexOf('-', f + 1); return s === -1 ? [label] : [label.slice(0, s), label.slice(s + 1)]; };
+    document.getElementById('donut-model').innerHTML    = buildDonutChart(locByModel,        'by Model', splitModelLabel);
+    document.getElementById('donut-language').innerHTML = buildDonutChart(locByFeature,      'by Feature');
+    document.getElementById('donut-ide').innerHTML      = buildDonutChart(locByIde,          'by IDE');
+    document.getElementById('donut-activity').innerHTML = buildDonutChart(locByActivity,     'by Activity');
+    document.getElementById('donut-feature').innerHTML  = buildDonutChart(locByCodeLanguage, 'Coding by Language');
+    document.getElementById('donut-syntax').innerHTML   = buildDonutChart(locByDocLanguage,  'Steering by Syntax');
 }
 

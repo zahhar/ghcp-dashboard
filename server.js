@@ -3,8 +3,28 @@ const fs = require('fs');
 const readline = require('readline');
 const path = require('path');
 
+// ── Load .env ───────────────────────────────────────────────────────────
+const envPath = path.join(__dirname, '.env');
+if (fs.existsSync(envPath)) {
+    for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        const idx = trimmed.indexOf('=');
+        if (idx > 0) {
+            process.env[trimmed.slice(0, idx).trim()] = trimmed.slice(idx + 1).trim();
+        }
+    }
+}
+
+const USE_MOCK_DATA = process.env.USE_MOCK_DATA === 'true';
+const DATA_ROOT = USE_MOCK_DATA ? path.join(__dirname, 'mock') : path.join(__dirname, 'data');
+
+if (USE_MOCK_DATA) {
+    console.log('⚠️  Mock mode enabled — loading data from /mock');
+}
+
 const PORT = 3000;
-const DATA_FILE = path.join(__dirname, 'data.json');
+const DATA_FILE = path.join(DATA_ROOT, 'data.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
 // Helper to handle static files
@@ -18,8 +38,8 @@ const mimeTypes = {
     '.svg': 'image/svg+xml'
 };
 
-const documentingLanguages = ['markdown', 'text', 'prompt', 'instructions', 'mermaid', 'plaintext', 'bibtex', 'snippets', 'latex', 'restructuredtext', 'search-result', 'skill', 'tex'];
-const configLanguages = ['csv', 'csv (semicolon)', 'dockercompose', 'dockerfile', 'dotenv', 'gitignore', 'ignore', 'ini', 'json', 'jsonc', 'jsonl', 'makefile', 'properties', 'spring-boot-properties', 'vscode', 'xml', 'yaml', 'code-text-binary', 'log'];
+// Source: https://github.com/microsoft/vscode-docs/blob/main/docs/languages/identifiers.md
+const documentingLanguages = ['markdown', 'text', 'prompt', 'instructions', 'mermaid', 'plaintext', 'bibtex', 'snippets', 'latex', 'restructuredtext', 'search-result', 'skill', 'tex', 'chatagent'];
 
 function serveStaticFile(req, res) {
     let filePath = path.join(PUBLIC_DIR, req.url === '/' ? 'index.html' : req.url);
@@ -42,7 +62,7 @@ function serveStaticFile(req, res) {
     });
 }
 
-const USERS_FILE = path.join(__dirname, 'users.json');
+const USERS_FILE = path.join(DATA_ROOT, 'users.json');
 
 let cachedParsedData = null;
 
@@ -113,10 +133,10 @@ async function getAggregatedData(monthFilter = null) {
                     user_login: user,
                     loc_added_sum: 0,
                     loc_deleted_sum: 0,
+                    loc_suggested_to_add_sum: 0,
+                    loc_suggested_to_delete_sum: 0,
                     doc_loc_added_sum: 0,
                     doc_loc_deleted_sum: 0,
-                    config_loc_added_sum: 0,
-                    config_loc_deleted_sum: 0,
                     user_initiated_interaction_count: 0,
                     code_generation_activity_count: 0,
                     code_acceptance_activity_count: 0,
@@ -131,8 +151,8 @@ async function getAggregatedData(monthFilter = null) {
                     models: {},
                     ides: {},
                     languages: {},
+                    features: {},
                     doc_languages: new Set(),
-                    config_languages: new Set(),
                     code_loc_from_models: 0,
                     daily: {},
                     allLocByModel: {},
@@ -147,7 +167,7 @@ async function getAggregatedData(monthFilter = null) {
 
             if (entry.day) {
                 if (!stats.daily[entry.day]) {
-                    stats.daily[entry.day] = { user_initiated: 0, code_generation: 0, code_loc: 0, doc_loc: 0, config_loc: 0 };
+                    stats.daily[entry.day] = { user_initiated: 0, code_generation: 0, code_loc: 0, doc_loc: 0 };
                 }
                 stats.daily[entry.day].user_initiated += (entry.user_initiated_interaction_count || 0);
                 stats.daily[entry.day].code_generation += (entry.code_generation_activity_count || 0);
@@ -155,9 +175,11 @@ async function getAggregatedData(monthFilter = null) {
 
             stats.loc_added_sum += (entry.loc_added_sum || 0);
             stats.loc_deleted_sum += (entry.loc_deleted_sum || 0);
+            stats.loc_suggested_to_add_sum += (entry.loc_suggested_to_add_sum || 0);
+            stats.loc_suggested_to_delete_sum += (entry.loc_suggested_to_delete_sum || 0);
 
             if (Array.isArray(entry.totals_by_language_feature)) {
-                let entryDocLoc = 0, entryConfigLoc = 0, entryTotalLoc = 0;
+                let entryDocLoc = 0, entryTotalLoc = 0;
                 for (const lf of entry.totals_by_language_feature) {
                     const lang = (lf.language || 'unknown').toLowerCase();
                     const lfLoc = (lf.loc_added_sum || 0) + (lf.loc_deleted_sum || 0);
@@ -166,19 +188,13 @@ async function getAggregatedData(monthFilter = null) {
                         stats.doc_loc_deleted_sum += (lf.loc_deleted_sum || 0);
                         if (lfLoc > 0) stats.doc_languages.add(lf.language);
                         entryDocLoc += lfLoc;
-                    } else if (configLanguages.includes(lang)) {
-                        stats.config_loc_added_sum += (lf.loc_added_sum || 0);
-                        stats.config_loc_deleted_sum += (lf.loc_deleted_sum || 0);
-                        if (lfLoc > 0) stats.config_languages.add(lf.language);
-                        entryConfigLoc += lfLoc;
                     }
                     if (lfLoc > 0) stats.allLocByLanguage[lf.language || 'unknown'] = (stats.allLocByLanguage[lf.language || 'unknown'] || 0) + lfLoc;
                     entryTotalLoc += lfLoc;
                 }
                 if (entry.day && stats.daily[entry.day]) {
                     stats.daily[entry.day].doc_loc += entryDocLoc;
-                    stats.daily[entry.day].config_loc += entryConfigLoc;
-                    stats.daily[entry.day].code_loc += entryTotalLoc - entryDocLoc - entryConfigLoc;
+                    stats.daily[entry.day].code_loc += entryTotalLoc - entryDocLoc;
                 }
             }
 
@@ -209,7 +225,7 @@ async function getAggregatedData(monthFilter = null) {
                     if (tm.model && allModelLoc > 0) {
                         stats.allLocByModel[tm.model] = (stats.allLocByModel[tm.model] || 0) + allModelLoc;
                     }
-                    if (documentingLanguages.includes(lang) || configLanguages.includes(lang)) continue;
+                    if (documentingLanguages.includes(lang)) continue;
 
                     const changedLoc = (tm.loc_added_sum || 0) + (tm.loc_deleted_sum || 0);
                     stats.code_loc_from_models += changedLoc;
@@ -228,6 +244,17 @@ async function getAggregatedData(monthFilter = null) {
                     if (ti.ide) {
                         const iLoc = (ti.loc_added_sum || 0) + (ti.loc_deleted_sum || 0);
                         stats.ides[ti.ide] = (stats.ides[ti.ide] || 0) + iLoc;
+                    }
+                }
+            }
+
+            if (Array.isArray(entry.totals_by_feature)) {
+                for (const tf of entry.totals_by_feature) {
+                    if (!tf.feature) continue;
+                    const fLoc = (tf.loc_suggested_to_add_sum || 0) + (tf.loc_suggested_to_delete_sum || 0)
+                               + (tf.loc_added_sum || 0) + (tf.loc_deleted_sum || 0);
+                    if (fLoc > 0) {
+                        stats.features[tf.feature] = (stats.features[tf.feature] || 0) + fLoc;
                     }
                 }
             }
@@ -253,13 +280,9 @@ async function getAggregatedData(monthFilter = null) {
         const docLocDeleted = user.doc_loc_deleted_sum;
         const docLocChanged = docLocAdded + docLocDeleted;
 
-        const configLocAdded = user.config_loc_added_sum;
-        const configLocDeleted = user.config_loc_deleted_sum;
-        const configLocChanged = configLocAdded + configLocDeleted;
-
-        const codeLocAdded = totalLocAdded - docLocAdded - configLocAdded;
-        const codeLocDeleted = totalLocDeleted - docLocDeleted - configLocDeleted;
-        const codeLocChanged = totalLocChanged - docLocChanged - configLocChanged;
+        const codeLocAdded = totalLocAdded - docLocAdded;
+        const codeLocDeleted = totalLocDeleted - docLocDeleted;
+        const codeLocChanged = totalLocChanged - docLocChanged;
 
         totalOrgLocChanged += totalLocChanged;
 
@@ -309,12 +332,10 @@ async function getAggregatedData(monthFilter = null) {
             total_loc_changed: totalLocChanged,
             total_loc_added: totalLocAdded,
             total_loc_deleted: totalLocDeleted,
+            total_suggested_changed: user.loc_suggested_to_add_sum + user.loc_suggested_to_delete_sum,
             doc_loc_changed: docLocChanged,
             doc_loc_added: docLocAdded,
             doc_loc_deleted: docLocDeleted,
-            config_loc_changed: configLocChanged,
-            config_loc_added: configLocAdded,
-            config_loc_deleted: configLocDeleted,
             code_loc_changed: codeLocChanged,
             code_loc_added: codeLocAdded,
             code_loc_deleted: codeLocDeleted,
@@ -324,6 +345,7 @@ async function getAggregatedData(monthFilter = null) {
             turns: user.user_initiated_interaction_count + user.code_generation_activity_count,
             acceptance_rate: Math.round(generationRatio * 100) + '%',
             avg_loc_added_daily: user.active_days.size > 0 ? Math.round(codeLocAdded / user.active_days.size) : 0,
+            perf_score: user.active_days.size > 0 ? Math.round(Math.max(codeLocAdded, codeLocDeleted) / user.active_days.size) : 0,
             favorite_model: favModel !== 'None' ? `${favModel}<br><span style="font-size:0.8em;color:var(--text-muted)">${favModelPct}</span>` : '-',
             favorite_ide: favIde !== 'None' ? `${favIde}<br><span style="font-size:0.8em;color:var(--text-muted)">${favIdePct}</span>` : '-',
             favorite_language: favLanguage !== 'None' ? `${favLanguage}<br><span style="font-size:0.8em;color:var(--text-muted)">${favLanguagePct}</span>` : '-',
@@ -334,18 +356,24 @@ async function getAggregatedData(monthFilter = null) {
             all_models_list: Object.keys(user.models).sort(),
             all_ides_list: Object.keys(user.ides).sort(),
             all_doc_languages_list: [...user.doc_languages].sort(),
-            all_config_languages_list: [...user.config_languages].sort(),
             daily: Object.entries(user.daily)
                 .sort(([a], [b]) => a.localeCompare(b))
-                .map(([day, d]) => ({ day, user_initiated: d.user_initiated, code_generation: d.code_generation, code_loc: d.code_loc, doc_loc: d.doc_loc, config_loc: d.config_loc })),
+                .map(([day, d]) => ({ day, user_initiated: d.user_initiated, code_generation: d.code_generation, code_loc: d.code_loc, doc_loc: d.doc_loc })),
             loc_by_model: user.allLocByModel,
             loc_by_language: user.allLocByLanguage,
+            loc_by_code_language: Object.fromEntries(
+                Object.entries(user.allLocByLanguage).filter(([l]) => !documentingLanguages.includes(l.toLowerCase()))
+            ),
+            loc_by_doc_language: Object.fromEntries(
+                Object.entries(user.allLocByLanguage).filter(([l]) => documentingLanguages.includes(l.toLowerCase()))
+            ),
+            loc_by_feature: user.features,
             loc_by_ide: user.ides,
             models: undefined,
             ides: undefined,
             languages: undefined,
+            features: undefined,
             doc_languages: undefined,
-            config_languages: undefined,
             allLocByModel: undefined,
             allLocByLanguage: undefined
         };
@@ -396,8 +424,10 @@ const server = http.createServer(async (req, res) => {
                     const prevMap = {};
                     for (const u of prevData.users) {
                         prevMap[u.user_login] = {
+                            total_loc_changed: u.total_loc_changed,
                             code_loc_changed: u.code_loc_changed,
                             avg_loc_added_daily: u.avg_loc_added_daily,
+                            perf_score: u.perf_score,
                             doc_loc_changed: u.doc_loc_changed,
                             config_loc_changed: u.config_loc_changed,
                             turns: u.turns,

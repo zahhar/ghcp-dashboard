@@ -9,7 +9,7 @@
  *   node debug.js YYYY-MM-DD   — re-download a single day and compare
  *   node debug.js latest       — download last 28 days and compare
  *
- * Downloads are saved to /debug and compared against data.json.
+ * Downloads are saved to /data/debug and compared against data.json.
  * Comparison is on top-level activity fields only (see COMPARE_FIELDS).
  *
  * Requires: .env file with GITHUB_TOKEN
@@ -34,9 +34,9 @@ if (fs.existsSync(envPath)) {
 }
 
 // ── Config ────────────────────────────────────────────────────────────────
-const DATA_FILE = path.join(__dirname, 'data.json');
-const DEBUG_DIR = path.join(__dirname, 'debug');
-const config    = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
+const DATA_FILE = path.join(__dirname, 'data', 'data.json');
+const DEBUG_DIR = path.join(__dirname, 'data', 'debug');
+const config    = JSON.parse(fs.readFileSync(path.join(__dirname, 'data', 'config.json'), 'utf8'));
 const TOKEN     = process.env.GITHUB_TOKEN;
 const ORG       = config.org;
 
@@ -244,7 +244,7 @@ async function debugDay(day) {
 
     const debugPath = path.join(DEBUG_DIR, `${day}_raw.json`);
     fs.writeFileSync(debugPath, allLines.join('\n') + '\n');
-    console.log(`💾 Saved to debug/${day}_raw.json`);
+    console.log(`💾 Saved to data/debug/${day}_raw.json`);
 
     compareWithDataJson(allLines, { start: day, end: day });
     console.log('\n🎉 Done!');
@@ -281,7 +281,7 @@ async function debugLatest() {
 
     const debugPath = path.join(DEBUG_DIR, `${report_start_day}_to_${report_end_day}_raw.json`);
     fs.writeFileSync(debugPath, allLines.join('\n') + '\n');
-    console.log(`\n💾 Saved to debug/${report_start_day}_to_${report_end_day}_raw.json`);
+    console.log(`\n💾 Saved to data/debug/${report_start_day}_to_${report_end_day}_raw.json`);
 
     compareWithDataJson(allLines, { start: report_start_day, end: report_end_day });
     console.log('\n🎉 Done!');

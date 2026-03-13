@@ -32,10 +32,16 @@ if (fs.existsSync(envPath)) {
     }
 }
 
+// ── Mock-mode guard ─────────────────────────────────────────────────────
+if (process.env.USE_MOCK_DATA === 'true') {
+    console.error('❌ USE_MOCK_DATA=true is set. Refusing to run in mock mode to protect real data.');
+    process.exit(1);
+}
+
 // ── Config ──────────────────────────────────────────────────────────────
-const CONFIG_PATH = path.join(__dirname, 'config.json');
-const DATA_FILE = path.join(__dirname, 'data.json');
-const DATA_DIR = path.join(__dirname, 'data');
+const CONFIG_PATH = path.join(__dirname, 'data', 'config.json');
+const DATA_FILE = path.join(__dirname, 'data', 'data.json');
+const DATA_DIR = path.join(__dirname, 'data', 'raw');
 
 const config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
 const TOKEN = process.env.GITHUB_TOKEN;
@@ -132,9 +138,9 @@ async function main() {
         return;
     }
 
-    // Ensure /data directory exists
+    // Ensure /data/raw directory exists
     if (!fs.existsSync(DATA_DIR)) {
-        fs.mkdirSync(DATA_DIR);
+        fs.mkdirSync(DATA_DIR, { recursive: true });
     }
 
     const daysToFetch = [];

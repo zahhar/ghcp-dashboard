@@ -18,35 +18,36 @@ Dashbord aims at AI/Agile Coaches, Teams leaders, Engineering managers, Project-
 - Which models/IDEs/languages are most used?
 - How usage differs across teams and time?
 
+## Mocked data included
+
+This repository is provided with **mocked data** stored under `mock\*.json`for demonstration and development.
+
 ## Tech stack
 
 - **Runtime:** Node.js (CommonJS)
 - **Backend:** built-in `http`, `fs`, `https` modules (no framework)
 - **Frontend:** vanilla HTML/CSS/JavaScript
 - **Data source:** GitHub REST API
-- **Storage:** local JSON/NDJSON files (`data.json`, `data/*.json`)
+- **Storage:** local JSON/NDJSON files (`data/*.json`)
 
 Project was intentionally built simple and file-based, so you can run it locally without infrastructure or implement your own data persistancy layer. 
 
 ## Repository structure
 
 - `server.js` — starts the web server and serves API + static UI
-- `update-data.js` — fetches new Copilot metrics and appends them to `data.json`
-- `debug.js` — tool to re-download old data and compare it with local `data.json`
-- `config.json` — stores Github Organization name and Last synchronized day
-- `users.json` — UserId mapping to Display name, Team, Revoked status (optional)
-- `data/` — raw daily downloads (not in git)
-- `debug/` — debug downloads/comparison artifacts (not in git)
+- `update-data.js` — fetches new Copilot metrics, stores the, under `data/raw/*.json` and appends them to `data/data.json`
+- `debug.js` — downloads hisotrical data to `data/debug/*.json`and compares it with local `data/data.json`
+- `data/config.json` — stores Github Organization name and Last synchronized day
+- `data/users.json` — UserId mapping to Display name, Team, Revoked status (optional)
+- `data/data.json` — all your data used to build a dashboard
 - `public/` — dashboard UI assets
+- `docs/` – documentation and screnshots
 
 ## Quick start
 
 ### 1) Prerequisites
 
 - Node.js 18+
-- A GitHub personal access token (classic) with `read:org`, `manage_billing:copilot` or `read:enterprise` scopes.
-- Copilot Metrics API access policy must be enabled for the organization. 
-
 
 ### 2) Install dependencies
 
@@ -54,12 +55,38 @@ Project was intentionally built simple and file-based, so you can run it locally
 npm install
 ```
 
+### 3) Prepare environment
+
+Copy `.env.example` to `.env`:
+
+```bash
+cp .env.example .env
+```
+
+### 3) Start the dashboard
+
+```bash
+npm run dev
+```
+
+Open `http://localhost:3000` - you should see mocked data loaded.
+
+## Using with real data
+
+### 1) Prerequisites
+
+- All Github Copilot users you want to monitor belong to the same Enterprise and same Organization within this Enterprise
+- You creted a [GitHub personal access token (classic)](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens) with `read:org`, `manage_billing:copilot` or `read:enterprise` scopes.
+- [Copilot usage metrics](https://docs.github.com/en/enterprise-cloud@latest/copilot/how-tos/administer-copilot/manage-for-enterprise/manage-enterprise-policies#defining-policies-for-your-enterprise) policy must be enabled for the organization. 
+
 ### 3) Configure environment and project
 
 1. Add `GITHUB_TOKEN` to `.env` (use `.env.example` as a template).
-2. Set your org in `config.json`:
+2. Copy `mock\config.json` to `data\config.json`
+3. Edit `data\config.json`:
 	 - `org`: GitHub organization name
-	 - `last_report_day`: bootstrap day for incremental updates
+	 - `last_report_day`: set inital day for incremental updates; note that Github Copilot Metrics API provides data only for last 28 days, so setting ot to earlier date won't bring you any data.
+4. (optionally) Edit `data\users.json` to map Github usernames to human readable names, indicate revoked licenses and group users into teams. 
 
 
 ### 4) Pull/update metrics data
@@ -71,17 +98,18 @@ npm run update
 This runs `update-data.js`, which:
 
 - fetches daily reports from `last_report_day + 1` to yesterday,
-- saves raw files to `data/`,
-- appends lines to `data.json`,
-- updates `config.json` with the latest successful day.
+- saves raw files to `data/raw/`,
+- appends lines to `data/data.json`,
+- updates `data/config.json` with the latest successful day.
 
-### 5) Start the dashboard
+### 3) Start the dashboard
 
 ```bash
 npm start
 ```
 
-Open `http://localhost:3000`.
+Opens `http://localhost:3000` - you should see real data loaded.
+
 
 ## NPM tasks
 
@@ -98,17 +126,8 @@ Examples:
 - `node debug.js YYYY-MM-DD` — compare one day
 - `node debug.js latest` — compare latest 28-day report
 
-It downloads comparison files into `debug/` and prints differences for key top-level fields.
+It downloads comparison files into `data/debug/` and prints differences for key top-level fields.
 
-## Mocked data included
-
-This repository is provided with **mocked data** for demonstration and development.
-
-Before using in a real environment, replace demo data with your own:
-
-- clear `data.json`
-- delete all files un `data/` and `debug/` (if any)
-- update `.env`, `config.json` and `users.json` for your configuration
 
 ## Known issues and limitations
 
