@@ -193,7 +193,7 @@ Date of the user's most recent GHCP activity record (format `DD.MM.YYYY`), with 
 
 All six donuts reflect the **currently filtered user set** (team filter and month filter apply). Each segment shows the share of total LOC for that dimension. Segments below 3% are excluded from labels; segments below 5% do not show a percentage on the ring. Hover any segment for the exact name and percentage.
 
-![Individual User Metrics table](/docs/table.jpg)
+![Output breakdown charts](/docs/screenshot3.jpg)
 
 ---
 
