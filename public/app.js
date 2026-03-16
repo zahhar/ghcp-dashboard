@@ -7,6 +7,39 @@ let currentStatusFilter = 'active';
 let prevMonthStats = null;
 let prevMonthTotals = null;
 
+// Show 🚀 instead of a numeric % badge when positive growth exceeds this threshold (%)
+const ROCKET_THRESHOLD = 200;
+
+// Number of days shown in the rolling DAU window and per-user detail chart (all-time mode)
+const DAU_WINDOW_DAYS = 30;
+
+// Pixel height of the bar drawing area in the org-level DAU chart
+const DAU_CHART_HEIGHT = 120;
+
+// Pixel height of the bar drawing area in the per-user detail (combined turns/LOC) chart
+const USER_CHART_HEIGHT = 170;
+
+// Maximum individually labelled slices in a donut chart; everything beyond is rolled into "Other"
+const DONUT_MAX_SEGMENTS = 8;
+
+// Minimum slice share (%) to render a percentage label directly on the donut ring
+const DONUT_LABEL_MIN_PCT = 5;
+
+// Minimum slice share (%) to render a callout leader line and text outside the ring
+const DONUT_CALLOUT_MIN_PCT = 3;
+
+// Row index limit: entrance animation is staggered only for the first N table rows to avoid jank on large lists
+const TABLE_ANIM_ROW_LIMIT = 50;
+
+// Per-row delay increment for staggered entrance animation (seconds)
+const TABLE_ANIM_DELAY_STEP = 0.015;
+
+// Maximum stagger delay cap so the last visible animated row never waits too long (seconds)
+const TABLE_ANIM_DELAY_MAX = 0.5;
+
+// Fuzzy search: accepted match window = query length × this multiplier (controls how spread-out matched chars can be)
+const FUZZY_MATCH_SPREAD = 2;
+
 function formatNumber(num) {
     if (num === null || num === undefined) return '0';
     return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, "'");
@@ -210,7 +243,7 @@ function fuzzyMatch(query, text) {
         }
     }
     if (qi < q.length) return false;
-    return (lastMatch - firstMatch + 1) <= q.length * 2;
+    return (lastMatch - firstMatch + 1) <= q.length * FUZZY_MATCH_SPREAD;
 }
 
 function matchesSearch(user, query) {
@@ -229,7 +262,7 @@ function diffBadge(current, previous, skipNew) {
     const diff = current - previous;
     if (diff === 0) return '<span class="diff-badge diff-neutral">= 0%</span>';
     const pct = Math.round(((current - previous) / previous) * 100);
-    if (!isFinite(pct) || Math.abs(pct) > 999) {
+    if (!isFinite(pct) || pct > ROCKET_THRESHOLD) {
         return diff > 0 ? '<span class="diff-badge diff-up">🚀</span>' : '<span class="diff-badge diff-down">📉</span>';
     }
     const cls = pct > 0 ? 'diff-up' : 'diff-down';
@@ -359,7 +392,7 @@ function renderUsersTable() {
             </td>
             <!-- Turns: total interactions | 🏃 output LOC per turn | 🎯 acceptance rate -->
             <td title="Total interaction turns&#10;🏃 Output LOC per turn (suggested + applied)&#10;🎯 Acceptance Rate: code_acceptance_activity / code_generation_activity">
-                <span style="font-size: 1.1em;">${formatNumber(user.turns)}</span>
+                <span class="metric-high" style="font-size: 1.1em;">${formatNumber(user.turns)}</span>
                 ${prev ? diffBadge(user.turns, prev.turns, true) : ''}
                 <br>
                 <span style="font-size:0.8em;color:var(--text-muted)">${user.turns > 0 ? '🏃\u202f' + formatNumber(Math.round((user.total_suggested_changed + user.total_loc_changed) / user.turns)) : '🏃 —'}</span>
@@ -383,7 +416,7 @@ function renderUsersTable() {
                 <span style="font-size:0.8em;color:var(--text-muted)">${signedLoc(user.code_loc_deleted, -1)}</span>
             </td>
             <td style="white-space: nowrap;" title="PERF = max(code added, code deleted) / active days&#10;${formatNumber(user.perf_score)} loc/day">
-                <span class="metric-high">${formatNumber(user.perf_score)}</span>
+                <span>${formatNumber(user.perf_score)}</span>
                 ${prev ? diffBadge(user.perf_score, prev.perf_score, true) : ''}
             </td>
             <td style="max-width: 7rem;" title="${user.all_languages_list && user.all_languages_list.length ? 'Languages: ' + user.all_languages_list.join(', ') : ''}">${user.favorite_language}</td>
@@ -407,8 +440,8 @@ function renderUsersTable() {
         tr.style.transition = `opacity 0.2s ease, transform 0.2s ease`;
 
         // add brief delay only on initial load to avoid jank on sorting
-        if (idx < 50) {
-            tr.style.transitionDelay = `${Math.min(idx * 0.015, 0.5)}s`;
+        if (idx < TABLE_ANIM_ROW_LIMIT) {
+            tr.style.transitionDelay = `${Math.min(idx * TABLE_ANIM_DELAY_STEP, TABLE_ANIM_DELAY_MAX)}s`;
         }
 
         tbody.appendChild(tr);
@@ -430,6 +463,20 @@ function buildUserMetaSection(user) {
     if (user.all_models_list && user.all_models_list.length) {
         rows.push(`<div class="meta-row"><span class="meta-label">Models:</span> ${user.all_models_list.join(', ')}</div>`);
     }
+    if (user.all_ides_list && user.all_ides_list.length) {
+        const ideLabels = user.all_ides_list.map(ide => {
+            const v = user.ide_versions && user.ide_versions[ide];
+            if (v) {
+                const detail = [];
+                if (v.ide_version) detail.push(v.ide_version);
+                if (v.plugin && v.plugin_version) detail.push(`${v.plugin} ${v.plugin_version}`);
+                else if (v.plugin) detail.push(v.plugin);
+                return detail.length ? `${ide} <span style="color:var(--text-muted);font-size:0.9em">(${detail.join(', ')})</span>` : ide;
+            }
+            return ide;
+        });
+        rows.push(`<div class="meta-row"><span class="meta-label">IDEs:</span> ${ideLabels.join(', ')}</div>`);
+    }
     if (!rows.length) return '';
     return `<div class="user-meta-section">${rows.join('')}</div>`;
 }
@@ -439,18 +486,6 @@ function buildUserMetaSection(user) {
 function openUserModal(user) {
     const overlay = document.getElementById('user-modal');
     let titleHTML = user.human_name + (user.team ? '  ·  ' + user.team : '') + `  ·  <span style="font-size:0.8em;color:var(--text-muted);font-weight:400">${user.user_login}</span>`;
-    const ideParts = [];
-    if (user.last_ide_name) {
-        ideParts.push(user.last_ide_version ? `${user.last_ide_name} ${user.last_ide_version}` : user.last_ide_name);
-    }
-    if (user.last_plugin && user.last_plugin_version) {
-        ideParts.push(`${user.last_plugin} ${user.last_plugin_version}`);
-    } else if (user.last_plugin) {
-        ideParts.push(user.last_plugin);
-    }
-    if (ideParts.length) {
-        titleHTML += `<span style="font-size:0.8em;color:var(--text-muted);font-weight:400">  ·  ${ideParts.join(', ')}</span>`;
-    }
     document.getElementById('modal-title').innerHTML = titleHTML;
     document.getElementById('modal-body').innerHTML = buildCombinedChart(user.daily || [], currentMonthFilter) + buildUserMetaSection(user);
     overlay.style.display = 'flex';
@@ -471,7 +506,7 @@ function openUserModal(user) {
 
 // ── Daily Active Users chart ──
 
-function computeDAU(users, days = 30, month = '') {
+function computeDAU(users, days = DAU_WINDOW_DAYS, month = '') {
     const dayNames = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
     const dayCountMap = {};
     for (const u of users) {
@@ -524,7 +559,7 @@ function buildDAUChart(users, totalUsers, month) {
     const data = computeDAU(users, 30, month || '');
     if (!data.length) return '<p style="color:var(--text-muted)">No data available.</p>';
     const maxCount = Math.max(...data.map(d => d.count), 1);
-    const chartH = 120;
+    const chartH = DAU_CHART_HEIGHT;
     let bars = '';
     for (const d of data) {
         const h = Math.round((d.count / maxCount) * chartH);
@@ -558,10 +593,53 @@ function renderDAUChart() {
         const activeBizDays = data.filter(d => !d.isWeekend && d.count > 0);
         if (activeBizDays.length) {
             const total = filteredUsers.length;
-            const sum = activeBizDays.reduce((s, d) => s + d.count, 0);
-            const avg = Math.round(sum / activeBizDays.length);
-            const pct = total > 0 ? Math.round(avg / total * 100) : 0;
-            avgStat.innerHTML = `<span style="font-size:0.7rem;color:var(--text-main);text-transform:uppercase;letter-spacing:0.2px;font-weight:600">Average</span><br><span style="font-size:0.95rem;color:var(--text-muted);font-weight:400">${avg}&thinsp;&middot;&thinsp;${pct}%</span>`;
+            const dauSum = activeBizDays.reduce((s, d) => s + d.count, 0);
+            const avgDAU = Math.round(dauSum / activeBizDays.length);
+            const pct = total > 0 ? Math.round(avgDAU / total * 100) : 0;
+
+            // avg turns per user = total turns ÷ total users in period
+            const totalTurns = filteredUsers.reduce((s, u) => s + (u.turns || 0), 0);
+            const avgTurns = total > 0 ? Math.round(totalTurns / total) : 0;
+
+            // avg perf = sum of individual perf_scores ÷ number of users who have any active days
+            const activeUsers = filteredUsers.filter(u => (u.active_days_count || 0) > 0);
+            const avgPerf = activeUsers.length > 0
+                ? Math.round(activeUsers.reduce((s, u) => s + (u.perf_score || 0), 0) / activeUsers.length)
+                : 0;
+
+            // prev-month equivalents (only available when a month is selected)
+            let prevAvgTurns = null, prevAvgPerf = null;
+            if (prevMonthStats) {
+                const prevUsers = filteredUsers.map(u => prevMonthStats[u.user_login]).filter(Boolean);
+                if (prevUsers.length) {
+                    prevAvgTurns = Math.round(prevUsers.reduce((s, p) => s + (p.turns || 0), 0) / prevUsers.length);
+                    const prevActive = prevUsers.filter(p => (p.active_days_count || 0) > 0);
+                    prevAvgPerf = prevActive.length > 0
+                        ? Math.round(prevActive.reduce((s, p) => s + (p.perf_score || 0), 0) / prevActive.length)
+                        : 0;
+                }
+            }
+
+            avgStat.innerHTML = `
+                <div style="display:flex;gap:1.5rem;align-items:flex-start">
+                    <div style="text-align:right">
+                        <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-bottom:2px">Avg DAU</div>
+                        <div style="font-size:1rem;color:var(--text-main);font-weight:600;line-height:1;white-space:nowrap">${avgDAU}</div>
+                        <div style="font-size:0.75rem;color:var(--text-muted);margin-top:1px">${pct}%</div>
+                    </div>
+                    <div style="width:1px;background:rgba(255,255,255,0.1);align-self:stretch"></div>
+                    <div style="text-align:right">
+                        <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-bottom:2px">Avg Turns</div>
+                        <div style="font-size:1rem;color:var(--fame-color);font-weight:600;line-height:1;white-space:nowrap">${formatNumber(avgTurns)} ${diffBadge(avgTurns, prevAvgTurns, true)}</div>
+                        <div style="font-size:0.75rem;color:var(--text-muted);margin-top:1px">per user</div>
+                    </div>
+                    <div style="width:1px;background:rgba(255,255,255,0.1);align-self:stretch"></div>
+                    <div style="text-align:right">
+                        <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-bottom:2px">Avg Perf</div>
+                        <div style="font-size:1rem;color:var(--text-main);font-weight:600;line-height:1;white-space:nowrap">${formatNumber(avgPerf)} ${diffBadge(avgPerf, prevAvgPerf, true)}</div>
+                        <div style="font-size:0.75rem;color:var(--text-muted);margin-top:1px">LOC / user / day</div>
+                    </div>
+                </div>`;
         } else {
             avgStat.innerHTML = '';
         }
@@ -575,7 +653,7 @@ function buildCombinedChart(daily, month) {
 
     const maxLoc = Math.max(...allDays.map(d => (d.code_loc||0) + (d.doc_loc||0)), 1);
     const maxTurns = Math.max(...allDays.map(d => d.user_initiated + d.code_generation), 1);
-    const chartH = 170;
+    const chartH = USER_CHART_HEIGHT;
 
     let bars = '';
     for (const d of allDays) {
@@ -640,7 +718,7 @@ function fillDailyGaps(daily, month) {
         if (!daily.length) return [];
         const sortedDays = [...daily].sort((a, b) => a.day.localeCompare(b.day));
         const endDate = new Date(sortedDays[sortedDays.length - 1].day + 'T00:00:00');
-        for (let i = 29; i >= 0; i--) {
+        for (let i = DAU_WINDOW_DAYS - 1; i >= 0; i--) {
             const dt = new Date(endDate);
             dt.setDate(endDate.getDate() - i);
             const iso = localISODate(dt);
@@ -672,7 +750,7 @@ function buildDonutChart(locMap, title, splitFn) {
         return `<div class="donut-card glass"><h3 class="donut-title">${title}</h3><p class="donut-empty">No data</p></div>`;
     }
 
-    const MAX = 8;
+    const MAX = DONUT_MAX_SEGMENTS;
     let segments = entries.slice(0, MAX);
     if (entries.length > MAX) {
         const rest = entries.slice(MAX).reduce((s, d) => s + d.value, 0);
@@ -711,14 +789,14 @@ function buildDonutChart(locMap, title, splitFn) {
         svgSegs += `<g><title>${d.label}: ${pctDisplay}%</title><circle cx="0" cy="0" r="${r}" fill="none" stroke="${color}" stroke-width="${sw}" stroke-dasharray="${dashLen.toFixed(2)} ${C.toFixed(2)}" transform="rotate(${startDeg.toFixed(2)})" /></g>`;
 
         // Percentage text on the ring for segments >= 5%
-        if (pctDisplay >= 5) {
+        if (pctDisplay >= DONUT_LABEL_MIN_PCT) {
             const lx = r * cosA;
             const ly = r * sinA;
             svgSegs += `<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" text-anchor="middle" dominant-baseline="central" fill="white" font-size="19" font-weight="700" font-family="Inter,sans-serif" pointer-events="none">${pctDisplay}%</text>`;
         }
 
         // Callout label (name only, truncated; full name available on hover via <title>)
-        if (pctDisplay >= 3) {
+        if (pctDisplay >= DONUT_CALLOUT_MIN_PCT) {
             const sx = (outerR + 3) * cosA;
             const sy = (outerR + 3) * sinA;
             const kx = kneeR * cosA;

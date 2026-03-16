@@ -123,14 +123,20 @@ Opens `http://localhost:3000` - you should see real data loaded.
 
 ## Troubleshooting
 
-If you need to cherry-pick or renew one of previous day data or check that data were read fully without gaps, `debug.js` is a verification utility to validate your local dataset against fresh API downloads.
+`debug.js` is an all-in-one debug and analysis utility. Run it without arguments to see all available commands.
 
-Examples:
+**User-level verification** — re-downloads raw data from the API and compares it against `data.json`:
 
-- `node debug.js YYYY-MM-DD` — compare one day
-- `node debug.js latest` — compare latest 28-day report
+- `node debug.js YYYY-MM-DD` — re-download one day and compare
+- `node debug.js latest` — re-download last 28 days and compare
 
-It downloads comparison files into `data/debug/` and prints differences for key top-level fields.
+**Org-level metrics** — fetches and analyses org-wide aggregated data (active-user counts, breakdowns by IDE/feature/model):
+
+- `node debug.js org fetch` — download latest 28-day org metrics
+- `node debug.js org discover` — compare key vocabulary (IDEs, models, features) vs `data.json`
+- `node debug.js org compare YYYY-MM-DD` — check day totals discrepancy: user aggregate vs org
+
+All downloads are saved to `data/debug/`.
 
 
 ## Known issues and limitations

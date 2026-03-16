@@ -16,16 +16,23 @@ if (fs.existsSync(envPath)) {
     }
 }
 
+// Set USE_MOCK_DATA=true in .env to serve data from /mock instead of /data (useful for local UI dev)
 const USE_MOCK_DATA = process.env.USE_MOCK_DATA === 'true';
+// Root directory for all data files — switches between live data and mock data automatically
 const DATA_ROOT = USE_MOCK_DATA ? path.join(__dirname, 'mock') : path.join(__dirname, 'data');
 
 if (USE_MOCK_DATA) {
     console.log('⚠️  Mock mode enabled — loading data from /mock');
 }
 
+// HTTP port the dashboard server listens on
 const PORT = 3000;
+// Path to the main NDJSON data file containing one user×day record per line
 const DATA_FILE = path.join(DATA_ROOT, 'data.json');
+// Directory that contains static frontend assets (HTML, JS, CSS)
 const PUBLIC_DIR = path.join(__dirname, 'public');
+// Value for the Access-Control-Allow-Origin header; restrict to a specific domain in production
+const CORS_ORIGIN = '*';
 
 // Helper to handle static files
 const mimeTypes = {
@@ -39,6 +46,8 @@ const mimeTypes = {
 };
 
 // Source: https://github.com/microsoft/vscode-docs/blob/main/docs/languages/identifiers.md
+// Languages treated as documentation/steering (Markdown, prompts, etc.) rather than code;
+// LOC for these is counted separately as doc_loc instead of code_loc
 const documentingLanguages = ['markdown', 'text', 'prompt', 'instructions', 'mermaid', 'plaintext', 'bibtex', 'snippets', 'latex', 'restructuredtext', 'search-result', 'skill', 'tex', 'chatagent'];
 
 function serveStaticFile(req, res) {
@@ -62,6 +71,7 @@ function serveStaticFile(req, res) {
     });
 }
 
+// Path to the JSON file mapping GitHub logins to display names, teams, and revoked status
 const USERS_FILE = path.join(DATA_ROOT, 'users.json');
 
 let cachedParsedData = null;
@@ -156,7 +166,8 @@ async function getAggregatedData(monthFilter = null) {
                     code_loc_from_models: 0,
                     daily: {},
                     allLocByModel: {},
-                    allLocByLanguage: {}
+                    allLocByLanguage: {},
+                    ideVersions: {}  // { [ide_name]: { last_seen_day, ide_version, plugin, plugin_version } }
                 };
             }
 
@@ -244,6 +255,15 @@ async function getAggregatedData(monthFilter = null) {
                     if (ti.ide) {
                         const iLoc = (ti.loc_added_sum || 0) + (ti.loc_deleted_sum || 0);
                         stats.ides[ti.ide] = (stats.ides[ti.ide] || 0) + iLoc;
+                        // Keep the latest known version info for this IDE (by most recent day)
+                        if (entry.day && (!stats.ideVersions[ti.ide] || entry.day >= stats.ideVersions[ti.ide].last_seen_day)) {
+                            stats.ideVersions[ti.ide] = {
+                                last_seen_day: entry.day,
+                                ide_version: ti.last_known_ide_version?.ide_version || null,
+                                plugin: ti.last_known_plugin_version?.plugin || null,
+                                plugin_version: ti.last_known_plugin_version?.plugin_version || null
+                            };
+                        }
                     }
                 }
             }
@@ -355,6 +375,13 @@ async function getAggregatedData(monthFilter = null) {
             all_languages_list: Object.keys(user.languages).sort(),
             all_models_list: Object.keys(user.models).sort(),
             all_ides_list: Object.keys(user.ides).sort(),
+            ide_versions: Object.fromEntries(
+                Object.entries(user.ideVersions).map(([ide, v]) => [ide, {
+                    ide_version: v.ide_version,
+                    plugin: v.plugin,
+                    plugin_version: v.plugin_version
+                }])
+            ),
             all_doc_languages_list: [...user.doc_languages].sort(),
             daily: Object.entries(user.daily)
                 .sort(([a], [b]) => a.localeCompare(b))
@@ -375,7 +402,8 @@ async function getAggregatedData(monthFilter = null) {
             features: undefined,
             doc_languages: undefined,
             allLocByModel: undefined,
-            allLocByLanguage: undefined
+            allLocByLanguage: undefined,
+            ideVersions: undefined
         };
     });
 
@@ -405,7 +433,7 @@ async function getAggregatedData(monthFilter = null) {
 
 const server = http.createServer(async (req, res) => {
     // Basic CORS
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Origin', CORS_ORIGIN);
 
     if (req.url.startsWith('/api/stats') && req.method === 'GET') {
         try {
