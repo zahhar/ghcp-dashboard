@@ -1,4 +1,4 @@
-# Yet Another Github Copilot Metrics Dashboard
+# Yet Another (but cool) Github Copilot Metrics Dashboard
 
 Lightweight GitHub Copilot usage dashboard for teams. It reads raw metrics exposed via new [Github REST API endpoints for Copilot usage metrics](https://docs.github.com/en/enterprise-cloud@latest/rest/copilot/copilot-usage-metrics?apiVersion=2022-11-28), aggregates them per user, and serves a browser-based leaderboard-style dashboard with filters and trend hints.
 
