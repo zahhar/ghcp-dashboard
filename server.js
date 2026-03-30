@@ -65,7 +65,11 @@ function serveStaticFile(req, res) {
                 res.end('Sorry, check with the site admin for error: ' + error.code + ' ..\n');
             }
         } else {
-            res.writeHead(200, { 'Content-Type': contentType });
+            const headers = { 'Content-Type': contentType };
+            if (extname === '.js' || extname === '.css') {
+                headers['Cache-Control'] = 'no-store';
+            }
+            res.writeHead(200, headers);
             res.end(content, 'utf-8');
         }
     });
@@ -77,7 +81,8 @@ const USERS_FILE = path.join(DATA_ROOT, 'users.json');
 let cachedParsedData = null;
 
 // Process data on the fly
-async function getAggregatedData(monthFilter = null) {
+// dayLimit: if set, only include days of the month whose day-of-month number is <= dayLimit
+async function getAggregatedData(monthFilter = null, dayLimit = null) {
     let userMapping = {};
     try {
         if (fs.existsSync(USERS_FILE)) {
@@ -115,6 +120,7 @@ async function getAggregatedData(monthFilter = null) {
             // Keep only the first occurrence of each logical key.
             const seen = new Set();
             parsedData = parsedData.filter(entry => {
+                if (entry.user_login) entry.user_login = entry.user_login.toLowerCase();
                 const key = `${entry.user_login}|${entry.day}|${entry.organization_id}|${entry.enterprise_id}`;
                 if (seen.has(key)) return false;
                 seen.add(key);
@@ -134,6 +140,11 @@ async function getAggregatedData(monthFilter = null) {
                 const month = entry.day.substring(0, 7); // 'YYYY-MM'
                 availableMonths.add(month);
                 if (monthFilter && month !== monthFilter) continue;
+                // When a day-of-month cap is specified, skip days beyond it
+                if (dayLimit !== null) {
+                    const dom = parseInt(entry.day.slice(8, 10), 10);
+                    if (dom > dayLimit) continue;
+                }
             }
 
             const user = entry.user_login || 'unknown';
@@ -232,19 +243,47 @@ async function getAggregatedData(monthFilter = null) {
             if (Array.isArray(entry.totals_by_language_model)) {
                 for (const tm of entry.totals_by_language_model) {
                     const lang = (tm.language || 'unknown').toLowerCase();
-                    const allModelLoc = (tm.loc_added_sum || 0) + (tm.loc_deleted_sum || 0);
-                    if (tm.model && allModelLoc > 0) {
-                        stats.allLocByModel[tm.model] = (stats.allLocByModel[tm.model] || 0) + allModelLoc;
+                    
+                    // Track total activity: suggested + accepted LOC for ALL languages (including doc langs)
+                    const acceptedLoc = (tm.loc_added_sum || 0) + (tm.loc_deleted_sum || 0);
+                    const suggestedLoc = (tm.loc_suggested_to_add_sum || 0) + (tm.loc_suggested_to_delete_sum || 0);
+                    const totalActivity = acceptedLoc + suggestedLoc;
+                    
+                    // Track in comprehensive maps (used for donut charts and now also for favorites)
+                    if (tm.model && totalActivity > 0) {
+                        stats.allLocByModel[tm.model] = (stats.allLocByModel[tm.model] || 0) + totalActivity;
+                        stats.models[tm.model] = (stats.models[tm.model] || 0) + totalActivity;
                     }
-                    if (documentingLanguages.includes(lang)) continue;
+                    if (tm.language && totalActivity > 0) {
+                        stats.allLocByLanguage[tm.language] = (stats.allLocByLanguage[tm.language] || 0) + totalActivity;
+                        stats.languages[tm.language] = (stats.languages[tm.language] || 0) + totalActivity;
+                    }
+                    
+                    // Track coding LOC separately for aggregate metrics (exclude doc langs from code_loc_from_models)
+                    if (!documentingLanguages.includes(lang)) {
+                        stats.code_loc_from_models += acceptedLoc;
+                    }
+                }
+            }
 
-                    const changedLoc = (tm.loc_added_sum || 0) + (tm.loc_deleted_sum || 0);
-                    stats.code_loc_from_models += changedLoc;
-                    if (tm.model) {
-                        stats.models[tm.model] = (stats.models[tm.model] || 0) + changedLoc;
-                    }
-                    if (tm.language) {
-                        stats.languages[tm.language] = (stats.languages[tm.language] || 0) + changedLoc;
+            // Fallback: If totals_by_language_model is empty (e.g., Visual Studio code completion),
+            // extract language data from totals_by_language_feature to ensure we track language usage
+            if (Array.isArray(entry.totals_by_language_model) && entry.totals_by_language_model.length === 0) {
+                if (Array.isArray(entry.totals_by_language_feature)) {
+                    for (const lf of entry.totals_by_language_feature) {
+                        const lang = (lf.language || 'unknown').toLowerCase();
+                        const acceptedLoc = (lf.loc_added_sum || 0) + (lf.loc_deleted_sum || 0);
+                        const suggestedLoc = (lf.loc_suggested_to_add_sum || 0) + (lf.loc_suggested_to_delete_sum || 0);
+                        const totalActivity = acceptedLoc + suggestedLoc;
+                        
+                        if (lf.language && totalActivity > 0) {
+                            stats.languages[lf.language] = (stats.languages[lf.language] || 0) + totalActivity;
+                        }
+                        
+                        // Track coding LOC for metrics (exclude doc langs)
+                        if (!documentingLanguages.includes(lang)) {
+                            stats.code_loc_from_models += acceptedLoc;
+                        }
                     }
                 }
             }
@@ -253,8 +292,13 @@ async function getAggregatedData(monthFilter = null) {
                 for (const ti of entry.totals_by_ide) {
                     // IDE LOC is not broken down by language in data.json
                     if (ti.ide) {
-                        const iLoc = (ti.loc_added_sum || 0) + (ti.loc_deleted_sum || 0);
-                        stats.ides[ti.ide] = (stats.ides[ti.ide] || 0) + iLoc;
+                        // Track IDE based on any activity (suggested + accepted)
+                        const acceptedLoc = (ti.loc_added_sum || 0) + (ti.loc_deleted_sum || 0);
+                        const suggestedLoc = (ti.loc_suggested_to_add_sum || 0) + (ti.loc_suggested_to_delete_sum || 0);
+                        const totalActivity = acceptedLoc + suggestedLoc;
+                        if (totalActivity > 0) {
+                            stats.ides[ti.ide] = (stats.ides[ti.ide] || 0) + totalActivity;
+                        }
                         // Keep the latest known version info for this IDE (by most recent day)
                         if (entry.day && (!stats.ideVersions[ti.ide] || entry.day >= stats.ideVersions[ti.ide].last_seen_day)) {
                             stats.ideVersions[ti.ide] = {
@@ -314,8 +358,9 @@ async function getAggregatedData(monthFilter = null) {
                 favModel = m;
             }
         }
-        const codeLocFromModels = user.code_loc_from_models;
-        const favModelPct = codeLocFromModels > 0 ? Math.round((favModelLoc / codeLocFromModels) * 100) + '%' : '0%';
+        // Calculate percentage based on total activity (suggested + accepted) across ALL models
+        const totalModelActivity = Object.values(user.models).reduce((sum, loc) => sum + loc, 0);
+        const favModelPct = totalModelActivity > 0 ? Math.round((favModelLoc / totalModelActivity) * 100) + '%' : '0%';
 
         let favIde = 'None';
         let favIdeLoc = 0;
@@ -325,7 +370,9 @@ async function getAggregatedData(monthFilter = null) {
                 favIde = i;
             }
         }
-        const favIdePct = totalLocChanged > 0 ? Math.round((favIdeLoc / totalLocChanged) * 100) + '%' : '0%';
+        // Calculate percentage based on total activity (suggested + accepted) across ALL IDEs
+        const totalIdeActivity = Object.values(user.ides).reduce((sum, loc) => sum + loc, 0);
+        const favIdePct = totalIdeActivity > 0 ? Math.round((favIdeLoc / totalIdeActivity) * 100) + '%' : '0%';
 
         let favLanguage = 'None';
         let favLanguageLoc = 0;
@@ -336,19 +383,23 @@ async function getAggregatedData(monthFilter = null) {
                 favLanguage = l;
             }
         }
-        const favLanguagePct = codeLocFromModels > 0 ? Math.round((favLanguageLoc / codeLocFromModels) * 100) + '%' : '0%';
+        // Calculate percentage based on total activity (suggested + accepted) across ALL languages
+        const totalLangActivity = Object.values(user.languages).reduce((sum, loc) => sum + loc, 0);
+        const favLanguagePct = totalLangActivity > 0 ? Math.round((favLanguageLoc / totalLangActivity) * 100) + '%' : '0%';
 
         // Map human name and revoked
         const mapping = userMapping[user.user_login] || {};
         const humanName = mapping.name || user.user_login;
         const isRevoked = mapping.revoked === true;
         const userTeam = mapping.team || '';
+        const userRole = mapping.role || '';
 
         return {
             ...user,
             human_name: humanName,
             revoked: isRevoked,
             team: userTeam,
+            role: userRole,
             total_loc_changed: totalLocChanged,
             total_loc_added: totalLocAdded,
             total_loc_deleted: totalLocDeleted,
@@ -448,7 +499,29 @@ const server = http.createServer(async (req, res) => {
                 const prevDate = new Date(yyyy, mm - 2, 1);
                 const prevMonth = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
                 if (data.availableMonths && data.availableMonths.includes(prevMonth)) {
-                    const prevData = await getAggregatedData(prevMonth);
+                    // Determine how many days of the current month we have data for,
+                    // then cap the previous month to the same day-of-month for a fair comparison.
+                    let prevDayLimit = null;
+                    try {
+                        const cfg = JSON.parse(fs.readFileSync(path.join(DATA_ROOT, 'config.json'), 'utf8'));
+                        if (cfg.last_report_day) {
+                            const lastDay = cfg.last_report_day; // YYYY-MM-DD
+                            const lastDayMonth = lastDay.substring(0, 7);
+                            if (lastDayMonth === monthFilter) {
+                                // Current month is incomplete — cap prev month to same day-of-month
+                                const currentDom = parseInt(lastDay.slice(8, 10), 10);
+                                // Days in previous month
+                                const daysInPrevMonth = new Date(prevDate.getFullYear(), prevDate.getMonth() + 1, 0).getDate();
+                                // Only cap if the current month's last day is within prev month's range
+                                if (currentDom < daysInPrevMonth) {
+                                    prevDayLimit = currentDom;
+                                }
+                                // else: current dom >= days in prev month → use full prev month (prevDayLimit stays null)
+                            }
+                            // If monthFilter is a past complete month, no cap needed (prevDayLimit stays null)
+                        }
+                    } catch (e) { /* config read failure — compare full months */ }
+                    const prevData = await getAggregatedData(prevMonth, prevDayLimit);
                     const prevMap = {};
                     for (const u of prevData.users) {
                         prevMap[u.user_login] = {
@@ -463,10 +536,32 @@ const server = http.createServer(async (req, res) => {
                         };
                     }
                     data.prevMonthStats = prevMap;
+
+                    // Compute avg DAU % for previous month while we have per-user daily data
+                    const prevDayCountMap = {};
+                    for (const u of prevData.users) {
+                        if (Array.isArray(u.daily)) {
+                            for (const d of u.daily) {
+                                prevDayCountMap[d.day] = (prevDayCountMap[d.day] || 0) + 1;
+                            }
+                        }
+                    }
+                    const prevBizActiveDays = Object.entries(prevDayCountMap).filter(([day]) => {
+                        const dow = new Date(day + 'T00:00:00').getDay();
+                        return dow !== 0 && dow !== 6;
+                    });
+                    let prevAvgDauPct = null;
+                    if (prevBizActiveDays.length > 0 && prevData.totalUsers > 0) {
+                        const prevDauSum = prevBizActiveDays.reduce((s, [, n]) => s + n, 0);
+                        const prevAvgDAU = prevDauSum / prevBizActiveDays.length;
+                        prevAvgDauPct = Math.round(prevAvgDAU / prevData.totalUsers * 100);
+                    }
+
                     data.prevMonthTotals = {
                         totalUsers: prevData.totalUsers,
                         totalInteractions: prevData.totalInteractions,
-                        totalOrgLocChanged: prevData.totalOrgLocChanged
+                        totalOrgLocChanged: prevData.totalOrgLocChanged,
+                        avgDauPct: prevAvgDauPct
                     };
                 }
             }

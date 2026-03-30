@@ -218,12 +218,54 @@ body {
     box-shadow: 0 15px 50px rgba(0, 0, 0, 0.3);
 }
 
-.fame-card h2 {
-    color: var(--text-main);
-}
-
 .card-header {
     margin-bottom: 1.5rem;
+}
+
+/* Collapsible sections (DAU, Users table, Output Breakdown) */
+.dau-card-header:hover h2,
+.section-toggle-header:hover h2 {
+    opacity: 0.85;
+}
+
+.dau-chevron,
+.section-chevron {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    transition: transform 0.25s ease;
+    line-height: 1;
+}
+
+.dau-chevron.collapsed,
+.section-chevron.collapsed {
+    transform: rotate(-90deg);
+}
+
+.dau-collapsible {
+    overflow: hidden;
+    max-height: 600px;
+    transition: max-height 0.3s ease, opacity 0.3s ease, margin-top 0.3s ease;
+    opacity: 1;
+    margin-top: 0;
+}
+
+.dau-collapsible.collapsed {
+    max-height: 0;
+    opacity: 0;
+    margin-top: -1rem;
+}
+
+.section-collapsible {
+    overflow: hidden;
+    transition: max-height 0.35s ease, opacity 0.3s ease, margin-top 0.3s ease;
+    opacity: 1;
+    margin-top: 0;
+}
+
+.section-collapsible.collapsed {
+    max-height: 0 !important;
+    opacity: 0;
+    margin-top: -1rem;
 }
 
 .card-header p {

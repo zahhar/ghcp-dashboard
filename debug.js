@@ -157,6 +157,7 @@ function compareWithDataJson(allLines, dayRange) {
         for (const line of lines) {
             try {
                 const rec = JSON.parse(line);
+                if (rec.user_login) rec.user_login = rec.user_login.toLowerCase();
                 const key = `${rec.user_id}:${rec.day}`;
                 if (map.has(key)) console.log(`  ⚠️  Duplicate key ${key} in ${label}`);
                 map.set(key, rec);

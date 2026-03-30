@@ -148,14 +148,15 @@ function getFriendlyDate(dateString) {
     const formattedDate = `${parts[2]}.${parts[1]}.${parts[0]}`;
 
     // Calculate relative string
-    const targetDate = new Date(dateString);
+    // Use local-date constructor to avoid UTC-midnight timezone shift
+    const targetDate = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
     const today = new Date();
     // Normalize to midnight to do purely day-level diffs
     targetDate.setHours(0, 0, 0, 0);
     today.setHours(0, 0, 0, 0);
 
     const diffTime = today - targetDate;
-    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+    const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24)); // Math.round handles DST days (23/25 hrs)
 
     let relativeStr = '';
     if (diffDays === 0) relativeStr = 'today';
@@ -378,7 +379,7 @@ function renderUsersTable() {
             <td>
                 <div class="user-cell" style="white-space: nowrap; flex-direction: column; align-items: flex-start; gap: 0.1rem;">
                     <span style="font-weight: 600;">${user.human_name}${revokedMark}${newUserMark}</span>
-                    <span style="font-size: 0.8em; color: var(--text-muted); font-weight: 400;">${user.user_login}</span>
+                    <span style="font-size: 0.8em; color: var(--text-muted); font-weight: 400;">${user.role || user.user_login}</span>
                     <span style="font-size: 0.8em; color: var(--text-muted); font-weight: 400;">${user.team || ''}</span>
                 </div>
             </td>
@@ -485,7 +486,10 @@ function buildUserMetaSection(user) {
 
 function openUserModal(user) {
     const overlay = document.getElementById('user-modal');
-    let titleHTML = user.human_name + (user.team ? '  ·  ' + user.team : '') + `  ·  <span style="font-size:0.8em;color:var(--text-muted);font-weight:400">${user.user_login}</span>`;
+    const roleAndLogin = user.role
+        ? `${user.role}  ·  <span style="font-size:0.75em;color:var(--text-muted);font-weight:400">${user.user_login}</span>`
+        : `<span style="font-size:0.8em;color:var(--text-muted);font-weight:400">${user.user_login}</span>`;
+    let titleHTML = user.human_name + (user.team ? '  ·  ' + user.team : '') + '  ·  ' + roleAndLogin;
     document.getElementById('modal-title').innerHTML = titleHTML;
     document.getElementById('modal-body').innerHTML = buildCombinedChart(user.daily || [], currentMonthFilter) + buildUserMetaSection(user);
     overlay.style.display = 'flex';
@@ -581,6 +585,53 @@ function buildDAUChart(users, totalUsers, month) {
     return `<div class="combined-chart">${bars}</div>`;
 }
 
+// ── Section collapse helper ─────────────────────────────────────────────
+function initSectionToggle(toggleId, collapsibleId, chevronId) {
+    const toggle  = document.getElementById(toggleId);
+    const body    = document.getElementById(collapsibleId);
+    const chevron = document.getElementById(chevronId);
+    if (!toggle || !body || !chevron) return;
+    toggle.addEventListener('click', () => {
+        const isCollapsed = body.classList.contains('collapsed');
+        if (isCollapsed) {
+            // Expand: set target height, remove collapsed, then clear inline style after transition
+            body.style.maxHeight = body.scrollHeight + 'px';
+            body.classList.remove('collapsed');
+            chevron.classList.remove('collapsed');
+            toggle.style.marginBottom = '';
+            body.addEventListener('transitionend', function clear() {
+                body.style.maxHeight = '';
+                body.removeEventListener('transitionend', clear);
+            });
+        } else {
+            // Collapse: pin current height, then animate to 0
+            body.style.maxHeight = body.scrollHeight + 'px';
+            requestAnimationFrame(() => {
+                body.classList.add('collapsed');
+                chevron.classList.add('collapsed');
+                toggle.style.marginBottom = '0';
+            });
+        }
+    });
+}
+
+// ── DAU collapse toggle ─────────────────────────────────────────────────
+(function initDAUToggle() {
+    const toggle   = document.getElementById('dau-toggle');
+    const chart    = document.getElementById('dau-chart-container');
+    const chevron  = document.getElementById('dau-chevron');
+    if (!toggle || !chart || !chevron) return;
+    toggle.addEventListener('click', () => {
+        const collapsed = chart.classList.toggle('collapsed');
+        chevron.classList.toggle('collapsed', collapsed);
+        toggle.style.marginBottom = collapsed ? '0' : '';
+    });
+})();
+
+// ── Users table + Output Breakdown collapse toggles ─────────────────────
+initSectionToggle('users-toggle',     'users-table-collapsible', 'users-chevron');
+initSectionToggle('breakdown-toggle', 'breakdown-collapsible',   'breakdown-chevron');
+
 function renderDAUChart() {
     const container = document.getElementById('dau-chart-container');
     if (!container) return;
@@ -608,8 +659,14 @@ function renderDAUChart() {
                 : 0;
 
             // prev-month equivalents (only available when a month is selected)
-            let prevAvgTurns = null, prevAvgPerf = null;
+            let prevAvgTurns = null, prevAvgPerf = null, prevPct = null;
             if (prevMonthStats) {
+                // avg DAU % for prev month — computed server-side and shipped in prevMonthTotals
+                // (client-side recompute is not possible because user.daily is scoped to current month)
+                if (prevMonthTotals && prevMonthTotals.avgDauPct != null) {
+                    prevPct = prevMonthTotals.avgDauPct;
+                }
+
                 const prevUsers = filteredUsers.map(u => prevMonthStats[u.user_login]).filter(Boolean);
                 if (prevUsers.length) {
                     prevAvgTurns = Math.round(prevUsers.reduce((s, p) => s + (p.turns || 0), 0) / prevUsers.length);
@@ -625,7 +682,7 @@ function renderDAUChart() {
                     <div style="text-align:right">
                         <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-bottom:2px">Avg DAU</div>
                         <div style="font-size:1rem;color:var(--text-main);font-weight:600;line-height:1;white-space:nowrap">${avgDAU}</div>
-                        <div style="font-size:0.75rem;color:var(--text-muted);margin-top:1px">${pct}%</div>
+                        <div style="font-size:0.75rem;color:var(--text-muted);margin-top:1px;white-space:nowrap">${pct}% ${diffBadge(pct, prevPct, true)}</div>
                     </div>
                     <div style="width:1px;background:rgba(255,255,255,0.1);align-self:stretch"></div>
                     <div style="text-align:right">

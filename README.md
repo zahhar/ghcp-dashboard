@@ -40,10 +40,13 @@ Project was intentionally built simple and file-based, so you can run it locally
 
 - `server.js` — starts the web server and serves API + static UI
 - `update-data.js` — fetches new Copilot metrics, stores the, under `data/raw/*.json` and appends them to `data/data.json`
+- `ingest-data.js` — imports user-provided NDJSON files from `data/raw/inbox/` into `data/data.json` without calling the GitHub API
 - `debug.js` — downloads hisotrical data to `data/debug/*.json`and compares it with local `data/data.json`
 - `data/config.json` — stores Github Organization name and Last synchronized day
 - `data/users.json` — UserId mapping to Display name, Team, Revoked status (optional)
 - `data/data.json` — all your data used to build a dashboard
+- `data/raw/inbox/` — drop your own NDJSON files here for ingest
+- `data/raw/processed/` — files are moved here automatically after successful ingest
 - `public/` — dashboard UI assets
 - `docs/` – documentation and screnshots
 
@@ -67,6 +70,8 @@ Copy `.env.example` to `.env`:
 cp .env.example .env
 ```
 
+By default, `.env.example` contains `USE_MOCK_DATA=true`, so the app loads `config/data/users` from `mock/*.json` for local demo/development.
+
 ### 3) Start the dashboard
 
 ```bash
@@ -86,11 +91,13 @@ Open `http://localhost:3000` - you should see mocked data loaded.
 ### 3) Configure environment and project
 
 1. Add `GITHUB_TOKEN` to `.env` (use `.env.example` as a template).
-2. Copy `mock\config.json` to `data\config.json`
-3. Edit `data\config.json`:
+2. Set `USE_MOCK_DATA=false` in `.env` before productive use, so data is loaded from `/data` instead of `/mock`.
+3. Copy `mock\config.json` to `data\config.json`
+4. Edit `data\config.json`:
 	 - `org`: GitHub organization name
 	 - `last_report_day`: set inital day for incremental updates; note that Github Copilot Metrics API provides data only for last 28 days, so setting ot to earlier date won't bring you any data.
-4. (optionally) Edit `data\users.json` to map Github usernames to human readable names, indicate revoked licenses and group users into teams. 
+5. (optionally) Edit `data\users.json` to map Github usernames to human readable names, indicate revoked licenses and group users into teams.
+   > ⚠️ **Keys in `users.json` must always be lowercase** (e.g. `"srikanth-reddy-battula_epam"`, not `"Srikanth-Reddy-Battula_epam"`). The dashboard normalizes `user_login` values from the API to lowercase at load time, so a mixed-case key will never match.
 
 
 ### 4) Pull/update metrics data
@@ -106,6 +113,27 @@ This runs `update-data.js`, which:
 - appends lines to `data/data.json`,
 - updates `data/config.json` with the latest successful day.
 
+## Data flow and freshness
+
+```mermaid
+flowchart LR
+	A[GitHub Copilot Metrics API] --> B[update-data.js\nnpm run update]
+	B --> C[data/raw/*.json\nraw daily snapshots]
+	B --> D[data/data.json\nappended NDJSON history]
+	B --> E[data/config.json\nlast_report_day advanced]
+	J[User-provided NDJSON\nvia email / SFTP / etc.] --> K[data/raw/inbox/]
+	K --> L[ingest-data.js\nnpm run ingest]
+	L --> D
+	L --> M[data/raw/processed/\narchived after ingest]
+	F[data/users.json\nuser/team mapping] --> G[server.js]
+	D --> G[server.js]
+	E --> G
+	H[public/* UI] --> G
+	G --> I[Dashboard in browser]
+```
+
+This integration is **not real-time**. GitHub Copilot metrics are published as daily NDJSON-style reports, and new files typically appear in the API **earliest on the next business day**. In practice, reporting delays of **24 hours or more** are normal.
+
 ### 3) Start the dashboard
 
 ```bash
@@ -115,11 +143,56 @@ npm start
 Opens `http://localhost:3000` - you should see real data loaded.
 
 
+## Importing data without GitHub API access
+
+In many enterprise environments developers do not have direct access to the GitHub API — metrics files are instead delivered by a central team via email, SFTP, shared drive, or a similar intermediary channel. The `npm run ingest` command covers this use-case.
+
+Files must be in the same NDJSON format produced by the GitHub Copilot Metrics API (one JSON object per line, each with at least `user_id` and `day` fields).
+
+### Folder structure
+
+Create the inbox folder before first use (the script also creates it automatically on first run):
+
+```bash
+mkdir -p data/raw/inbox
+mkdir -p data/raw/processed
+```
+
+### Workflow
+
+1. Place one or more NDJSON files into `data/raw/inbox/`.
+2. Run the ingest command:
+
+```bash
+npm run ingest
+```
+
+The script will:
+- Parse every `*.json` file found in `data/raw/inbox/`
+- Skip any record whose `user_id:day` key already exists in `data.json` (no duplicates)
+- Append genuinely new records to `data/data.json`
+- Move each processed file to `data/raw/processed/` so it is not ingested again
+
+3. Start (or restart) the dashboard:
+
+```bash
+npm start
+```
+
+Or as a single command sequence:
+
+```bash
+npm run ingest && npm start
+```
+
+You can drop multiple files at once — all are processed in a single run. If a filename collision occurs in `processed/`, a counter suffix is added automatically.
+
 ## NPM tasks
 
 - `npm start` — run the dashboard server (`node server.js`)
 - `npm run dev` — same as start (no watcher currently)
-- `npm run update` — fetch and append new Copilot metrics
+- `npm run update` — fetch and append new Copilot metrics from the GitHub API
+- `npm run ingest` — import user-provided NDJSON files from `data/raw/inbox/` into `data/data.json`
 
 ## Troubleshooting
 
