@@ -1,4 +1,4 @@
-# Yet Another Github Copilot Metrics Dashboard
+# Yet Another (but cool) Github Copilot Metrics Dashboard
 
 Lightweight GitHub Copilot usage dashboard for teams. It reads raw metrics exposed via new [Github REST API endpoints for Copilot usage metrics](https://docs.github.com/en/enterprise-cloud@latest/rest/copilot/copilot-usage-metrics?apiVersion=2022-11-28), aggregates them per user, and serves a browser-based leaderboard-style dashboard with filters and trend hints.
 
@@ -43,7 +43,7 @@ Project was intentionally built simple and file-based, so you can run it locally
 - `ingest-data.js` — imports user-provided NDJSON files from `data/raw/inbox/` into `data/data.json` without calling the GitHub API
 - `debug.js` — downloads hisotrical data to `data/debug/*.json`and compares it with local `data/data.json`
 - `data/config.json` — stores Github Organization name and Last synchronized day
-- `data/users.json` — UserId mapping to Display name, Team, Revoked status (optional)
+- `data/users.json` — UserId mapping to Display name, Team, Role, Revoked status (all optional)
 - `data/data.json` — all your data used to build a dashboard
 - `data/raw/inbox/` — drop your own NDJSON files here for ingest
 - `data/raw/processed/` — files are moved here automatically after successful ingest
@@ -96,9 +96,19 @@ Open `http://localhost:3000` - you should see mocked data loaded.
 4. Edit `data\config.json`:
 	 - `org`: GitHub organization name
 	 - `last_report_day`: set inital day for incremental updates; note that Github Copilot Metrics API provides data only for last 28 days, so setting ot to earlier date won't bring you any data.
-5. (optionally) Edit `data\users.json` to map Github usernames to human readable names, indicate revoked licenses and group users into teams.
-   > ⚠️ **Keys in `users.json` must always be lowercase** (e.g. `"srikanth-reddy-battula_epam"`, not `"Srikanth-Reddy-Battula_epam"`). The dashboard normalizes `user_login` values from the API to lowercase at load time, so a mixed-case key will never match.
+5. (optionally) Edit `data\users.json` to map Github usernames to human readable names, assign roles, indicate revoked licenses, and group users into teams. All fields are optional. 
 
+   Each entry looks like:
+   ```json
+   "github-login": {
+     "name": "Display Name",
+     "team": "Team Name",
+     "role": "Senior Developer",
+     "revoked": false
+   }
+   ```
+
+   > ⚠️ **Keys in `users.json` must always be lowercase** (e.g. `"firstame-lastname"`, not `"Firstame-Lastname"`). The dashboard normalizes `user_login` values from the API to lowercase at load time, so a mixed-case key will never match.
 
 ### 4) Pull/update metrics data
 
