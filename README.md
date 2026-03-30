@@ -108,7 +108,7 @@ Open `http://localhost:3000` - you should see mocked data loaded.
    }
    ```
 
-   > ⚠️ **Keys in `users.json` must always be lowercase** (e.g. `"firstame-lastname"`, not `"Firstame-Lastname"`). The dashboard normalizes `user_login` values from the API to lowercase at load time, so a mixed-case key will never match.
+   > ⚠️ **Keys in `users.json` must always be lowercase** (e.g. `"github-login"`, not `"GitHub-Login"`). The app lowercases `user_login` values from the NDJSON at load time, so a mixed-case key will never match.
 
 ### 4) Pull/update metrics data
 
