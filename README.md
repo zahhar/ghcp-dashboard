@@ -6,6 +6,12 @@ Lightweight GitHub Copilot usage dashboard for teams. It reads raw metrics expos
 
 [Detailed documentation on every metrics](/docs/metrics.md)
 
+The dashboard tracks activity across three Copilot interfaces:
+
+- **IDE plugin** — chat asks, code completions, agent/coding-agent runs; favorite IDE with version, language, model
+- **CLI** — GitHub Copilot CLI request counts, active days via CLI, and last known CLI version (shown in user detail popup)
+- **Feature breakdown** — per-feature LOC or interaction counts including `chat_panel_edit_mode`, `chat_panel_plan_mode`, and related modes
+
 ![Screenshot](/docs/screenshot.jpg)
 
 > ⚠️ **Disclaimer:** this is a fully **vibe-coded** project that did **not** go through comprehensive code review or testing. Results may be inaccurate, and bugs are possible.

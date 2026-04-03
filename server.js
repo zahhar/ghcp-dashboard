@@ -161,9 +161,11 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                     user_initiated_interaction_count: 0,
                     code_generation_activity_count: 0,
                     code_acceptance_activity_count: 0,
+                    cli_prompt_count: 0,
                     active_days: new Set(),
                     agent_days: new Set(),
                     chat_days: new Set(),
+                    cli_days: new Set(),
                     last_active_day: '',
                     last_ide_name: null,
                     last_plugin: null,
@@ -178,7 +180,8 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                     daily: {},
                     allLocByModel: {},
                     allLocByLanguage: {},
-                    ideVersions: {}  // { [ide_name]: { last_seen_day, ide_version, plugin, plugin_version } }
+                    ideVersions: {},  // { [ide_name]: { last_seen_day, ide_version, plugin, plugin_version } }
+                    cli_version_info: null,  // { last_seen_day, cli_version }
                 };
             }
 
@@ -186,13 +189,21 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             stats.user_initiated_interaction_count += (entry.user_initiated_interaction_count || 0);
             stats.code_generation_activity_count += (entry.code_generation_activity_count || 0);
             stats.code_acceptance_activity_count += (entry.code_acceptance_activity_count || 0);
+            stats.cli_prompt_count += (entry.totals_by_cli?.prompt_count || 0);
+            if (entry.day && entry.totals_by_cli?.last_known_cli_version?.cli_version) {
+                const cv = entry.totals_by_cli.last_known_cli_version.cli_version;
+                if (!stats.cli_version_info || entry.day >= stats.cli_version_info.last_seen_day) {
+                    stats.cli_version_info = { last_seen_day: entry.day, cli_version: cv };
+                }
+            }
 
             if (entry.day) {
                 if (!stats.daily[entry.day]) {
-                    stats.daily[entry.day] = { user_initiated: 0, code_generation: 0, code_loc: 0, doc_loc: 0 };
+                    stats.daily[entry.day] = { user_initiated: 0, code_generation: 0, code_loc: 0, doc_loc: 0, cli_turns: 0 };
                 }
                 stats.daily[entry.day].user_initiated += (entry.user_initiated_interaction_count || 0);
                 stats.daily[entry.day].code_generation += (entry.code_generation_activity_count || 0);
+                stats.daily[entry.day].cli_turns += (entry.totals_by_cli?.prompt_count || 0);
             }
 
             stats.loc_added_sum += (entry.loc_added_sum || 0);
@@ -236,8 +247,9 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                         stats.last_ide_version = bestIde.last_known_ide_version?.ide_version || null;
                     }
                 }
-                if (entry.used_agent) stats.agent_days.add(entry.day);
+                if (entry.used_agent || entry.used_copilot_coding_agent) stats.agent_days.add(entry.day);
                 if (entry.used_chat) stats.chat_days.add(entry.day);
+                if (entry.used_cli) stats.cli_days.add(entry.day);
             }
 
             if (Array.isArray(entry.totals_by_language_model)) {
@@ -317,8 +329,16 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                     if (!tf.feature) continue;
                     const fLoc = (tf.loc_suggested_to_add_sum || 0) + (tf.loc_suggested_to_delete_sum || 0)
                                + (tf.loc_added_sum || 0) + (tf.loc_deleted_sum || 0);
-                    if (fLoc > 0) {
-                        stats.features[tf.feature] = (stats.features[tf.feature] || 0) + fLoc;
+                    // When a feature produces no LOC output (e.g. chat_panel_plan_mode finishing
+                    // with 0 suggestions, or chat_panel_unknown_mode), fall back to interaction
+                    // counts so the feature still appears in the breakdown.
+                    // Using the fallback only when fLoc=0 prevents double-accounting LOC.
+                    const fValue = fLoc > 0 ? fLoc
+                                 : (tf.user_initiated_interaction_count || 0)
+                                   + (tf.code_generation_activity_count || 0)
+                                   + (tf.code_acceptance_activity_count || 0);
+                    if (fValue > 0) {
+                        stats.features[tf.feature] = (stats.features[tf.feature] || 0) + fValue;
                     }
                 }
             }
@@ -413,7 +433,8 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             active_days_count: user.active_days.size,
             agent_days_count: user.agent_days.size,
             chat_days_count: user.chat_days.size,
-            turns: user.user_initiated_interaction_count + user.code_generation_activity_count,
+            cli_days_count: user.cli_days.size,
+            turns: user.user_initiated_interaction_count + user.code_generation_activity_count + user.cli_prompt_count,
             acceptance_rate: Math.round(generationRatio * 100) + '%',
             avg_loc_added_daily: user.active_days.size > 0 ? Math.round(codeLocAdded / user.active_days.size) : 0,
             perf_score: user.active_days.size > 0 ? Math.round(Math.max(codeLocAdded, codeLocDeleted) / user.active_days.size) : 0,
@@ -423,6 +444,7 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             active_days: undefined,
             agent_days: undefined,
             chat_days: undefined,
+            cli_days: undefined,
             all_languages_list: Object.keys(user.languages).sort(),
             all_models_list: Object.keys(user.models).sort(),
             all_ides_list: Object.keys(user.ides).sort(),
@@ -433,10 +455,11 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                     plugin_version: v.plugin_version
                 }])
             ),
+            cli_version: user.cli_version_info?.cli_version || null,
             all_doc_languages_list: [...user.doc_languages].sort(),
             daily: Object.entries(user.daily)
                 .sort(([a], [b]) => a.localeCompare(b))
-                .map(([day, d]) => ({ day, user_initiated: d.user_initiated, code_generation: d.code_generation, code_loc: d.code_loc, doc_loc: d.doc_loc })),
+                .map(([day, d]) => ({ day, user_initiated: d.user_initiated, code_generation: d.code_generation, cli_turns: d.cli_turns, code_loc: d.code_loc, doc_loc: d.doc_loc })),
             loc_by_model: user.allLocByModel,
             loc_by_language: user.allLocByLanguage,
             loc_by_code_language: Object.fromEntries(
@@ -454,7 +477,8 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             doc_languages: undefined,
             allLocByModel: undefined,
             allLocByLanguage: undefined,
-            ideVersions: undefined
+            ideVersions: undefined,
+            cli_version_info: undefined
         };
     });
 

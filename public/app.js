@@ -423,15 +423,18 @@ function renderUsersTable() {
             <td style="max-width: 7rem;" title="${user.all_languages_list && user.all_languages_list.length ? 'Languages: ' + user.all_languages_list.join(', ') : ''}">${user.favorite_language}</td>
             <td style="max-width: 8rem; overflow-wrap: break-word;" title="${user.all_models_list && user.all_models_list.length ? 'Models: ' + user.all_models_list.join(', ') : ''}">${user.favorite_model}</td>
             <td style="white-space: nowrap;" title="${user.all_ides_list && user.all_ides_list.length ? 'IDEs: ' + user.all_ides_list.join(', ') : ''}">${user.favorite_ide}</td>
-            <td>
-                ${user.active_days_count}
-                ${prev ? diffAbsBadge(user.active_days_count, prev.active_days_count) : ''}
+            <td style="white-space: nowrap;">
+                <span style="font-size:0.8em;color:var(--text-muted)">🤖&nbsp;${user.agent_days_count}</span>
                 <br>
-                <span style="font-size:0.8em;color:var(--text-muted)">🤖 ${user.agent_days_count}</span>
+                <span style="font-size:0.8em;color:var(--text-muted)">💬&nbsp;${user.chat_days_count}</span>
                 <br>
-                <span style="font-size:0.8em;color:var(--text-muted)">💬 ${user.chat_days_count}</span>
+                <span style="font-size:0.8em;color:var(--text-muted)">⌨️&nbsp;${user.cli_days_count}</span>
             </td>
-            <td style="color:var(--text-muted); font-size: 0.9em; white-space: nowrap;">${getFriendlyDate(user.last_active_day)}</td>
+            <td style="color:var(--text-muted); font-size: 0.9em; white-space: nowrap;">
+                ${getFriendlyDate(user.last_active_day)}
+                <br>
+                <span style="font-size:0.8em;">${user.active_days_count} days ${prev ? diffAbsBadge(user.active_days_count, prev.active_days_count) : ''}</span>
+            </td>
         `;
 
         // micro-animation for table rows
@@ -477,6 +480,9 @@ function buildUserMetaSection(user) {
             return ide;
         });
         rows.push(`<div class="meta-row"><span class="meta-label">IDEs:</span> ${ideLabels.join(', ')}</div>`);
+    }
+    if (user.cli_version) {
+        rows.push(`<div class="meta-row"><span class="meta-label">CLI:</span> ${user.cli_version}</div>`);
     }
     if (!rows.length) return '';
     return `<div class="user-meta-section">${rows.join('')}</div>`;
@@ -709,7 +715,7 @@ function buildCombinedChart(daily, month) {
     const allDays = fillDailyGaps(daily, month);
 
     const maxLoc = Math.max(...allDays.map(d => (d.code_loc||0) + (d.doc_loc||0)), 1);
-    const maxTurns = Math.max(...allDays.map(d => d.user_initiated + d.code_generation), 1);
+    const maxTurns = Math.max(...allDays.map(d => (d.user_initiated||0) + (d.code_generation||0) + (d.cli_turns||0)), 1);
     const chartH = USER_CHART_HEIGHT;
 
     let bars = '';
@@ -719,23 +725,28 @@ function buildCombinedChart(daily, month) {
         const totalLoc = codeLoc + docLoc;
         const locBottom = Math.round((totalLoc / maxLoc) * chartH);
 
-        const turnsTotal = d.user_initiated + d.code_generation;
-        const hUser = Math.round((d.user_initiated / maxTurns) * chartH);
-        const hGen  = Math.round((d.code_generation / maxTurns) * chartH);
+        const cliTurns = d.cli_turns || 0;
+        const turnsTotal = (d.user_initiated||0) + (d.code_generation||0) + cliTurns;
+        const hUser = Math.round(((d.user_initiated||0) / maxTurns) * chartH);
+        const hGen  = Math.round(((d.code_generation||0) / maxTurns) * chartH);
+        const hCli  = Math.round((cliTurns / maxTurns) * chartH);
 
         const parts = d.day.split('-');
         const label = parts[2] + '.' + parts[1];
         const dowStyle = d.isWeekend ? 'color:rgba(239,68,68,0.5)' : '';
 
         const locTitle = `LOC: ${formatNumber(totalLoc)} (Code: ${formatNumber(codeLoc)}, Doc: ${formatNumber(docLoc)})`;
-        const turnsTitle = `Turns: ${turnsTotal} (User: ${d.user_initiated}, CodeGen: ${d.code_generation})`;
+        const turnsTitle = `Turns: ${turnsTotal} (Chat asks: ${d.user_initiated||0}, Agent/CodeGen: ${d.code_generation||0}, CLI: ${cliTurns})`;
+        const totalLabel = turnsTotal > 0 ? `<span class="bar-turns-total">${turnsTotal}</span>` : '';
 
         bars += `
             <div class="bar-col-combined" title="${turnsTitle}">
                 <div class="bar-area" style="height:${chartH}px">
-                    <div class="bar-stack" style="height:${hUser + hGen}px">
+                    ${totalLabel}
+                    <div class="bar-stack" style="height:${hUser + hGen + hCli}px">
                         <div class="bar-seg-user" style="height:${hUser}px"></div>
                         <div class="bar-seg-codegen" style="height:${hGen}px"></div>
+                        <div class="bar-seg-cli" style="height:${hCli}px"></div>
                     </div>
                     ${totalLoc ? `<div class="loc-step" style="bottom:${locBottom}px" title="${locTitle}"><span class="loc-val">${formatNumber(totalLoc)}</span></div>` : ''}
                 </div>
@@ -747,7 +758,8 @@ function buildCombinedChart(daily, month) {
         <div class="combined-chart">${bars}</div>
         <div class="chart-legend">
             <span><span class="legend-dot" style="background:#818cf8"></span>Chat asks</span>
-            <span><span class="legend-dot" style="background:#38bdf8"></span>Agent runs</span>
+            <span><span class="legend-dot" style="background:#38bdf8"></span>Agent/CodeGen</span>
+            <span><span class="legend-dot" style="background:#34d399"></span>CLI</span>
             <span style="margin-left:0.5rem;padding-left:0.75rem;border-left:1px solid rgba(255,255,255,0.1)"><span class="legend-line"></span>Total LOC coding</span>
         </div>`;
 }
@@ -765,7 +777,7 @@ function fillDailyGaps(daily, month) {
         for (let day = 1; day <= daysInMonth; day++) {
             const dt = new Date(yyyy, mm - 1, day);
             const iso = localISODate(dt);
-            const entry = dayMap[iso] || { day: iso, user_initiated: 0, code_generation: 0, code_loc: 0, doc_loc: 0 };
+            const entry = dayMap[iso] || { day: iso, user_initiated: 0, code_generation: 0, cli_turns: 0, code_loc: 0, doc_loc: 0 };
             entry.dow = dayNames[dt.getDay()];
             entry.isWeekend = dt.getDay() === 0 || dt.getDay() === 6;
             allDays.push(entry);
@@ -779,7 +791,7 @@ function fillDailyGaps(daily, month) {
             const dt = new Date(endDate);
             dt.setDate(endDate.getDate() - i);
             const iso = localISODate(dt);
-            const entry = dayMap[iso] || { day: iso, user_initiated: 0, code_generation: 0, code_loc: 0, doc_loc: 0 };
+            const entry = dayMap[iso] || { day: iso, user_initiated: 0, code_generation: 0, cli_turns: 0, code_loc: 0, doc_loc: 0 };
             entry.dow = dayNames[dt.getDay()];
             entry.isWeekend = dt.getDay() === 0 || dt.getDay() === 6;
             allDays.push(entry);

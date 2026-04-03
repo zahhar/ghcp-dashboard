@@ -553,6 +553,10 @@ body {
     background: #38bdf8;
 }
 
+.bar-seg-cli {
+    background: #34d399;
+}
+
 .bar-seg-code {
     background: #10b981;
 }
@@ -591,6 +595,17 @@ body {
     display: flex;
     align-items: flex-end;
     justify-content: center;
+}
+
+.bar-turns-total {
+    position: absolute;
+    top: -1.1rem;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 0.6rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+    pointer-events: none;
 }
 
 .bar-area .bar-stack {
