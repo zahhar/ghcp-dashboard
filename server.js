@@ -26,7 +26,7 @@ if (USE_MOCK_DATA) {
 }
 
 // HTTP port the dashboard server listens on
-const PORT = 3000;
+const PORT = 8080;
 // Path to the main NDJSON data file containing one user×day record per line
 const DATA_FILE = path.join(DATA_ROOT, 'data.json');
 // Directory that contains static frontend assets (HTML, JS, CSS)
@@ -90,6 +90,25 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
         }
     } catch (e) {
         console.error('Failed to read users.json:', e);
+    }
+
+    // Load enterprise / organization label maps from config.json
+    let config = {};
+    try {
+        const cfgPath = path.join(DATA_ROOT, 'config.json');
+        if (fs.existsSync(cfgPath)) config = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+    } catch (e) { /* ignore — labels will fall back to raw IDs */ }
+    const enterpriseLabelMap = {};
+    const orgLabelMap = {};
+    if (Array.isArray(config.enterprises)) {
+        for (const e of config.enterprises) {
+            if (e.id != null) enterpriseLabelMap[String(e.id)] = e.label || String(e.id);
+            if (Array.isArray(e.organizations)) {
+                for (const o of e.organizations) {
+                    if (o.id != null) orgLabelMap[String(o.id)] = o.label || String(o.id);
+                }
+            }
+        }
     }
 
     const userStats = {};
@@ -176,6 +195,8 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                     languages: {},
                     features: {},
                     doc_languages: new Set(),
+                    enterprise_ids: new Set(),
+                    organization_ids: new Set(),
                     code_loc_from_models: 0,
                     daily: {},
                     allLocByModel: {},
@@ -187,6 +208,8 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
 
             const stats = userStats[user];
             stats.user_initiated_interaction_count += (entry.user_initiated_interaction_count || 0);
+            if (entry.enterprise_id != null) stats.enterprise_ids.add(String(entry.enterprise_id));
+            if (entry.organization_id != null) stats.organization_ids.add(String(entry.organization_id));
             stats.code_generation_activity_count += (entry.code_generation_activity_count || 0);
             stats.code_acceptance_activity_count += (entry.code_acceptance_activity_count || 0);
             stats.cli_prompt_count += (entry.totals_by_cli?.prompt_count || 0);
@@ -414,12 +437,21 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
         const userTeam = mapping.team || '';
         const userRole = mapping.role || '';
 
+        const enterpriseIds = [...user.enterprise_ids];
+        const organizationIds = [...user.organization_ids];
+        const enterpriseLabel = enterpriseIds.map(id => enterpriseLabelMap[id] || id).join(', ');
+        const organizationLabel = organizationIds.map(id => orgLabelMap[id] || id).join(', ');
+
         return {
             ...user,
             human_name: humanName,
             revoked: isRevoked,
             team: userTeam,
             role: userRole,
+            enterprise_ids: enterpriseIds,
+            organization_ids: organizationIds,
+            enterprise_label: enterpriseLabel,
+            organization_label: organizationLabel,
             total_loc_changed: totalLocChanged,
             total_loc_added: totalLocAdded,
             total_loc_deleted: totalLocDeleted,
@@ -484,6 +516,40 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
 
     const allUsers = [...results].sort((a, b) => b.code_loc_changed - a.code_loc_changed);
 
+    // Append users from users.json who have no telemetry at all (never used Copilot)
+    const activeLogins = new Set(results.map(u => u.user_login));
+    for (const [login, mapping] of Object.entries(userMapping)) {
+        if (activeLogins.has(login)) continue;
+        // Skip if revoked — they never used it and aren't active anyway
+        // (keep revoked-never-active if you want, but it adds noise; change condition to include them)
+        allUsers.push({
+            user_login: login,
+            human_name: mapping.name || login,
+            revoked: mapping.revoked === true,
+            team: mapping.team || '',
+            role: mapping.role || '',
+            enterprise_ids: [],
+            organization_ids: [],
+            enterprise_label: '',
+            organization_label: '',
+            never_active: true,
+            total_loc_changed: 0, total_loc_added: 0, total_loc_deleted: 0,
+            total_suggested_changed: 0,
+            doc_loc_changed: 0, doc_loc_added: 0, doc_loc_deleted: 0,
+            code_loc_changed: 0, code_loc_added: 0, code_loc_deleted: 0,
+            active_days_count: 0, agent_days_count: 0, chat_days_count: 0, cli_days_count: 0,
+            turns: 0, acceptance_rate: '0%',
+            avg_loc_added_daily: 0, perf_score: 0,
+            favorite_model: '-', favorite_ide: '-', favorite_language: '-',
+            last_active_day: '',
+            all_languages_list: [], all_models_list: [], all_ides_list: [],
+            ide_versions: {}, cli_version: null,
+            all_doc_languages_list: [], daily: [],
+            loc_by_model: {}, loc_by_language: {}, loc_by_code_language: {},
+            loc_by_doc_language: {}, loc_by_feature: {}, loc_by_ide: {},
+        });
+    }
+
     // Sort available months nicely
     const orderedMonths = Array.from(availableMonths).sort();
 
@@ -495,6 +561,17 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
     // Collect available teams from user mapping
     const availableTeams = [...new Set(Object.values(userMapping).map(u => u.team).filter(Boolean))].sort();
 
+    // Collect enterprises and organizations seen in actual data, with nested hierarchy
+    const seenEnterpriseIds = [...new Set(results.flatMap(u => u.enterprise_ids))].sort();
+    const seenOrgIds = new Set(results.flatMap(u => u.organization_ids));
+    const availableEnterprises = seenEnterpriseIds.map(id => {
+        const eCfg = (config.enterprises || []).find(e => String(e.id) === id);
+        const orgs = (eCfg?.organizations || [])
+            .map(o => ({ id: String(o.id), label: o.label || String(o.id) }))
+            .filter(o => seenOrgIds.has(o.id));
+        return { id, label: enterpriseLabelMap[id] || id, organizations: orgs };
+    });
+
     return {
         users: allUsers,
         totalUsers: results.length,
@@ -502,6 +579,7 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
         totalOrgLocChanged: totalOrgLocChanged,
         availableMonths: orderedMonths,
         availableTeams,
+        availableEnterprises,
         allLanguages
     };
 }
@@ -528,8 +606,17 @@ const server = http.createServer(async (req, res) => {
                     let prevDayLimit = null;
                     try {
                         const cfg = JSON.parse(fs.readFileSync(path.join(DATA_ROOT, 'config.json'), 'utf8'));
-                        if (cfg.last_report_day) {
-                            const lastDay = cfg.last_report_day; // YYYY-MM-DD
+                        // Find the max last_report_day across all configured organizations
+                        let cfgLastReportDay = null;
+                        for (const ent of (cfg.enterprises || [])) {
+                            for (const org of (ent.organizations || [])) {
+                                if (org.last_report_day && (!cfgLastReportDay || org.last_report_day > cfgLastReportDay)) {
+                                    cfgLastReportDay = org.last_report_day;
+                                }
+                            }
+                        }
+                        if (cfgLastReportDay) {
+                            const lastDay = cfgLastReportDay; // YYYY-MM-DD
                             const lastDayMonth = lastDay.substring(0, 7);
                             if (lastDayMonth === monthFilter) {
                                 // Current month is incomplete — cap prev month to same day-of-month

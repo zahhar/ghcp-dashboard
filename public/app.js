@@ -2,6 +2,7 @@ let globalUsers = [];
 let currentSortColumn = 'total_loc_changed';
 let currentSortDesc = true;
 let currentTeamFilter = '';
+let currentScopeFilter = ''; // 'e:ID' = enterprise, 'o:ID' = organization
 let currentSearchQuery = '';
 let currentStatusFilter = 'active';
 let prevMonthStats = null;
@@ -68,6 +69,11 @@ document.addEventListener('DOMContentLoaded', () => {
         renderDAUChart();
     });
 
+    document.getElementById('scope-filter').addEventListener('change', (e) => {
+        currentScopeFilter = e.target.value;
+        renderUsersTable();
+    });
+
     document.getElementById('status-filter').addEventListener('change', (e) => {
         currentStatusFilter = e.target.value;
         renderUsersTable();
@@ -121,6 +127,35 @@ async function fetchDashboardData(month = '') {
             });
         }
 
+        // Populate scope (enterprise → organization hierarchy) dropdown
+        const scopeFilterEl = document.getElementById('scope-filter');
+        if (data.availableEnterprises && scopeFilterEl.options.length <= 1) {
+            data.availableEnterprises.forEach(e => {
+                if (data.availableEnterprises.length > 1 || (e.organizations && e.organizations.length > 1)) {
+                    // Add selectable enterprise-level option
+                    const eOpt = document.createElement('option');
+                    eOpt.value = 'e:' + e.id;
+                    eOpt.textContent = '🏢 ' + e.label;
+                    scopeFilterEl.appendChild(eOpt);
+                }
+                if (e.organizations && e.organizations.length > 0) {
+                    const grp = document.createElement('optgroup');
+                    grp.label = e.label;
+                    e.organizations.forEach(o => {
+                        const oOpt = document.createElement('option');
+                        oOpt.value = 'o:' + o.id;
+                        oOpt.textContent = o.label;
+                        grp.appendChild(oOpt);
+                    });
+                    scopeFilterEl.appendChild(grp);
+                }
+            });
+            // Hide dropdown entirely if nothing meaningful to filter
+            const totalChoices = data.availableEnterprises.reduce(
+                (n, e) => n + 1 + (e.organizations ? e.organizations.length : 0), 0);
+            scopeFilterEl.style.display = totalChoices <= 1 ? 'none' : '';
+        }
+
         globalUsers = data.users || [];
         prevMonthStats = data.prevMonthStats || null;
         prevMonthTotals = data.prevMonthTotals || null;
@@ -165,9 +200,9 @@ function getFriendlyDate(dateString) {
     else if (diffDays >= 7 && diffDays < 14) relativeStr = '1 week ago';
     else if (diffDays >= 14 && diffDays < 30) relativeStr = `${Math.floor(diffDays / 7)} weeks ago`;
     else if (diffDays >= 30) relativeStr = '1+ month ago';
-    else relativeStr = 'in the future?';
+    else relativeStr = '?';
 
-    return `${formattedDate}<br><span style="font-size:0.8em;color:var(--text-muted)">${relativeStr}</span>`;
+    return `${formattedDate}<br><span style="font-size:0.8em;color:var(--text-muted)">Active ${relativeStr}</span>`;
 }
 
 function setupTableSorting() {
@@ -251,6 +286,7 @@ function matchesSearch(user, query) {
     if (!query) return true;
     const fields = [
         user.human_name, user.user_login, user.team,
+        user.enterprise_label, user.organization_label,
         user.favorite_language, user.favorite_model, user.favorite_ide
     ];
     return fields.some(f => f && fuzzyMatch(query, String(f)));
@@ -300,6 +336,18 @@ function renderUsersTable() {
         ? globalUsers.filter(u => u.team === currentTeamFilter)
         : [...globalUsers];
 
+    // Apply enterprise/organization scope filter
+    if (currentScopeFilter) {
+        const colonIdx = currentScopeFilter.indexOf(':');
+        const scopeType = currentScopeFilter.slice(0, colonIdx);
+        const scopeId   = currentScopeFilter.slice(colonIdx + 1);
+        if (scopeType === 'e') {
+            sortedUsers = sortedUsers.filter(u => Array.isArray(u.enterprise_ids) && u.enterprise_ids.includes(scopeId));
+        } else if (scopeType === 'o') {
+            sortedUsers = sortedUsers.filter(u => Array.isArray(u.organization_ids) && u.organization_ids.includes(scopeId));
+        }
+    }
+
     // Apply status filter
     if (currentStatusFilter === 'active') {
         sortedUsers = sortedUsers.filter(u => !u.revoked);
@@ -335,12 +383,14 @@ function renderUsersTable() {
     document.getElementById('stat-diff-interactions').innerHTML = prevMonthStats ? diffBadge(filteredInteractions, prevFilteredInteractions, true) : '';
     document.getElementById('stat-diff-loc').innerHTML = prevMonthStats ? diffBadge(filteredOutput, prevFilteredLoc, true) : '';
 
-    // Sort logic
+    // Sort logic — never-active users always sink to the bottom regardless of column
     if (currentSortColumn !== 'rank') {
         sortedUsers.sort((a, b) => {
+            if (a.never_active && !b.never_active) return 1;
+            if (!a.never_active && b.never_active) return -1;
+
             let valA = a[currentSortColumn];
             let valB = b[currentSortColumn];
-
 
             // string vs number comparisons
             if (typeof valA === 'string' && typeof valB === 'string') {
@@ -365,6 +415,9 @@ function renderUsersTable() {
         if (user.revoked) {
             tr.classList.add('revoked-user');
         }
+        if (user.never_active) {
+            tr.classList.add('never-active-user');
+        }
 
         const revokedMark = user.revoked ? ' <span style="font-size: 0.9em;">❌</span>' : '';
         const newUserMark = (prevMonthStats && !prev) ? ' <span class="diff-badge diff-new">new</span>' : '';
@@ -381,6 +434,7 @@ function renderUsersTable() {
                     <span style="font-weight: 600;">${user.human_name}${revokedMark}${newUserMark}</span>
                     <span style="font-size: 0.8em; color: var(--text-muted); font-weight: 400;">${user.role || user.user_login}</span>
                     <span style="font-size: 0.8em; color: var(--text-muted); font-weight: 400;">${user.team || ''}</span>
+                    ${user.enterprise_label || user.organization_label ? `<span style="font-size: 0.75em; color: var(--text-muted); font-weight: 400; opacity: 0.8;">${[user.enterprise_label, user.organization_label].filter(Boolean).join(' · ')}</span>` : ''}
                 </div>
             </td>
             <!-- Output: grand total (suggested+applied) | 💡 suggested LOC | ✏️ applied LOC -->
@@ -424,16 +478,20 @@ function renderUsersTable() {
             <td style="max-width: 8rem; overflow-wrap: break-word;" title="${user.all_models_list && user.all_models_list.length ? 'Models: ' + user.all_models_list.join(', ') : ''}">${user.favorite_model}</td>
             <td style="white-space: nowrap;" title="${user.all_ides_list && user.all_ides_list.length ? 'IDEs: ' + user.all_ides_list.join(', ') : ''}">${user.favorite_ide}</td>
             <td style="white-space: nowrap;">
-                <span style="font-size:0.8em;color:var(--text-muted)">🤖&nbsp;${user.agent_days_count}</span>
+                ${user.never_active
+                    ? '<span style="font-size:0.85em;color:var(--text-muted);opacity:0.7">Never used</span>'
+                    : `<span style="font-size:0.8em;color:var(--text-muted)">🤖&nbsp;${user.agent_days_count}</span>
                 <br>
                 <span style="font-size:0.8em;color:var(--text-muted)">💬&nbsp;${user.chat_days_count}</span>
                 <br>
-                <span style="font-size:0.8em;color:var(--text-muted)">⌨️&nbsp;${user.cli_days_count}</span>
+                <span style="font-size:0.8em;color:var(--text-muted)">⌨️&nbsp;${user.cli_days_count}</span>`}
             </td>
             <td style="color:var(--text-muted); font-size: 0.9em; white-space: nowrap;">
-                ${getFriendlyDate(user.last_active_day)}
+                ${user.never_active
+                    ? '<span style="font-size:0.85em;opacity:0.5">— no activity —</span>'
+                    : `${getFriendlyDate(user.last_active_day)}
                 <br>
-                <span style="font-size:0.8em;">${user.active_days_count} days ${prev ? diffAbsBadge(user.active_days_count, prev.active_days_count) : ''}</span>
+                <span style="font-size:0.8em;">${user.active_days_count} days total ${prev ? diffAbsBadge(user.active_days_count, prev.active_days_count) : ''}</span>`}
             </td>
         `;
 
@@ -461,6 +519,12 @@ function renderUsersTable() {
 
 function buildUserMetaSection(user) {
     const rows = [];
+    if (user.enterprise_label) {
+        rows.push(`<div class="meta-row"><span class="meta-label">Enterprise:</span> ${user.enterprise_label}</div>`);
+    }
+    if (user.organization_label) {
+        rows.push(`<div class="meta-row"><span class="meta-label">Organization:</span> ${user.organization_label}</div>`);
+    }
     if (user.all_languages_list && user.all_languages_list.length) {
         rows.push(`<div class="meta-row"><span class="meta-label">Languages:</span> ${user.all_languages_list.join(', ')}</div>`);
     }

@@ -63,6 +63,10 @@
                             class="search-input" />
                     </div>
                     <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
+                        <select id="scope-filter"
+                            style="padding:0.5rem 1rem;border-radius:8px;background:rgba(30,41,59,0.8);color:white;border:1px solid rgba(255,255,255,0.2);cursor:pointer;font-size:0.95rem;outline:none">
+                            <option value="">All enterprises</option>
+                        </select>
                         <select id="status-filter"
                             style="padding:0.5rem 1rem;border-radius:8px;background:rgba(30,41,59,0.8);color:white;border:1px solid rgba(255,255,255,0.2);cursor:pointer;font-size:0.95rem;outline:none">
                             <option value="">All users</option>
@@ -95,7 +99,7 @@
                                     <th>Model</th>
                                     <th>IDE</th>
                                     <th>Days</th>
-                                    <th>Last Active</th>
+                                    <th>Activity</th>
                                 </tr>
                             </thead>
                             <tbody id="users-body">

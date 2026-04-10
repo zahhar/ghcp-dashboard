@@ -1,5 +1,17 @@
 {
-  "org": "your-github-organization",
-  "last_report_day": "2026-03-01",
-  "missing_data_days": []
+  "enterprises": [
+    {
+      "id": "your-enterprise-id",
+      "label": "Your Enterprise",
+      "organizations": [
+        {
+          "id": "your-org-id",
+          "label": "Your Organization",
+          "slug": "your-github-organization",
+          "last_report_day": "2026-03-01",
+          "missing_data_days": []
+        }
+      ]
+    }
+  ]
 }

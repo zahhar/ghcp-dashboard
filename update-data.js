@@ -48,14 +48,9 @@ const DATA_DIR = path.join(__dirname, 'data', 'raw');
 
 const config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
 const TOKEN = process.env.GITHUB_TOKEN;
-const ORG = config.org;
 
 if (!TOKEN) {
     console.error('❌ GITHUB_TOKEN not found. Create a .env file with GITHUB_TOKEN=<your token>');
-    process.exit(1);
-}
-if (!ORG || ORG === 'YOUR_ORG_NAME') {
-    console.error('❌ Set your GitHub org name in config.json');
     process.exit(1);
 }
 
@@ -109,19 +104,23 @@ function httpsGet(url, headers = {}) {
     });
 }
 
-async function fetchReportLinks(day) {
-    const url = `https://api.github.com/orgs/${ORG}/copilot/metrics/reports/users-1-day?day=${day}`;
+async function fetchReportLinks(orgSlug, day) {
+    const url = `https://api.github.com/orgs/${orgSlug}/copilot/metrics/reports/users-1-day?day=${day}`;
     const res = await httpsGet(url, {
         'Accept': 'application/vnd.github+json',
         'Authorization': `Bearer ${TOKEN}`,
         'X-GitHub-Api-Version': '2026-03-10'
     });
 
+    if (res.status === 204) {
+        // No activity recorded for this day — not an error, just an empty day
+        return { empty: true };
+    }
     if (res.status === 404) {
-        console.log(`  ⚠️  No report for ${day} (404)`);
+        console.log(`  ⚠️  No report for ${day} (404) — will retry next run`);
         return null;
     }
-    if (res.status !== 200) {
+    if (res.status < 200 || res.status >= 300) {
         console.error(`  ❌ API error for ${day}: HTTP ${res.status}`);
         console.error(`     ${res.body.slice(0, 200)}`);
         return null;
@@ -130,8 +129,8 @@ async function fetchReportLinks(day) {
     return JSON.parse(res.body);
 }
 
-async function fetchLatestReport() {
-    const url = `https://api.github.com/orgs/${ORG}/copilot/metrics/reports/users-28-day/latest`;
+async function fetchLatestReport(orgSlug) {
+    const url = `https://api.github.com/orgs/${orgSlug}/copilot/metrics/reports/users-28-day/latest`;
     const res = await httpsGet(url, {
         'Accept': 'application/vnd.github+json',
         'Authorization': `Bearer ${TOKEN}`,
@@ -236,38 +235,40 @@ function prepareMissingLines(candidateLines, existingKeys) {
     return { missingLines, duplicates };
 }
 
-// ── Main ────────────────────────────────────────────────────────────────
-async function main() {
-    if (!Array.isArray(config.missing_data_days)) {
-        config.missing_data_days = [];
+// ── Config helpers ──────────────────────────────────────────────────────
+// Returns direct references to all org objects so mutations persist into config
+function getAllOrgs() {
+    const orgs = [];
+    for (const ent of (config.enterprises || [])) {
+        for (const org of (ent.organizations || [])) {
+            orgs.push(org);
+        }
+    }
+    return orgs;
+}
+
+// ── Per-org processing ──────────────────────────────────────────────────
+async function processOrg(org, yesterday, existingKeys) {
+    if (!org.slug) {
+        console.error(`  ❌ Organization "${org.label || org.id}" is missing "slug" — skipping`);
+        return;
     }
 
-    const lastDay = config.last_report_day;
-    const yesterday = getYesterday();
-
-    console.log(`📊 Last report day: ${lastDay}`);
-    console.log(`📅 Yesterday:       ${yesterday}`);
-    if (config.missing_data_days.length) {
-        console.log(`🕳️  Tracked missing days: ${config.missing_data_days.join(', ')}`);
+    if (!Array.isArray(org.missing_data_days)) {
+        org.missing_data_days = [];
     }
 
-    // Ensure /data/raw directory exists
-    if (!fs.existsSync(DATA_DIR)) {
-        fs.mkdirSync(DATA_DIR, { recursive: true });
+    const lastDay = org.last_report_day;
+    console.log(`  📊 Last report day : ${lastDay || '(none)'}`);
+    console.log(`  📅 Yesterday       : ${yesterday}`);
+    if (org.missing_data_days.length) {
+        console.log(`  🕳️  Tracked missing days: ${org.missing_data_days.join(', ')}`);
     }
 
-    const latestReport = await fetchLatestReport();
+    const latestReport = await fetchLatestReport(org.slug);
     if (!latestReport || !latestReport.download_links || latestReport.download_links.length === 0) {
-        console.log('⚠️  Latest endpoint returned no data links.');
-
-        const unresolved = uniqueSortedDates(
-            config.missing_data_days.filter(d => d <= yesterday)
-        );
-        config.missing_data_days = unresolved;
-        fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2) + '\n');
-
-        console.log(`📝 Updated missing_data_days (${unresolved.length}) in config.`);
-        console.log('🎉 Done!');
+        console.log('  ⚠️  Latest endpoint returned no data links.');
+        org.missing_data_days = uniqueSortedDates(org.missing_data_days.filter(d => d <= yesterday));
         return;
     }
 
@@ -275,38 +276,34 @@ async function main() {
     const reportEnd = latestReport.report_end_day;
     const latestLinks = latestReport.download_links;
 
-    console.log(`📥 Latest report range: ${reportStart} → ${reportEnd}`);
-    console.log(`🔗 Latest report files: ${latestLinks.length}`);
+    console.log(`  📥 Latest report range: ${reportStart} → ${reportEnd}`);
+    console.log(`  🔗 Latest report files: ${latestLinks.length}`);
 
     const latestLines = await downloadLinks(latestLinks);
-    console.log(`✅ Downloaded ${latestLines.length} line(s) from latest endpoint`);
+    console.log(`  ✅ Downloaded ${latestLines.length} line(s) from latest endpoint`);
 
-    const latestRawPath = path.join(DATA_DIR, `${reportStart}_to_${reportEnd}_latest_raw.json`);
+    const safeSlug = org.slug.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const latestRawPath = path.join(DATA_DIR, `${safeSlug}_${reportStart}_to_${reportEnd}_latest_raw.json`);
     fs.writeFileSync(latestRawPath, latestLines.join('\n') + '\n');
-    console.log(`💾 Saved raw latest report to data/raw/${path.basename(latestRawPath)}`);
-
-    const existingDataLines = readDataFileLines(DATA_FILE);
-    const { existingKeys, maxDay: maxDayInData } = collectExistingDataState(existingDataLines);
+    console.log(`  💾 Saved raw latest report to data/raw/${path.basename(latestRawPath)}`);
 
     const latestMerge = prepareMissingLines(latestLines, existingKeys);
     if (latestMerge.missingLines.length > 0) {
         const appendData = '\n' + latestMerge.missingLines.map(x => x.line).join('\n') + '\n';
         fs.appendFileSync(DATA_FILE, appendData);
     }
-
-    console.log(`🧩 Latest merge: +${latestMerge.missingLines.length} new line(s), ${latestMerge.duplicates} duplicate key(s) skipped`);
+    console.log(`  🧩 Latest merge: +${latestMerge.missingLines.length} new line(s), ${latestMerge.duplicates} duplicate key(s) skipped`);
 
     const daysWithLatestData = getDaysWithData(latestLines);
     const windowDays = dateRange(reportStart, yesterday);
     const gapsFromLatest = windowDays.filter(day => !daysWithLatestData.has(day));
-
-    const carryMissingDays = (config.missing_data_days || []).filter(day => day <= yesterday);
+    const carryMissingDays = (org.missing_data_days || []).filter(day => day <= yesterday);
     const backfillCandidates = uniqueSortedDates([...gapsFromLatest, ...carryMissingDays]);
 
     if (backfillCandidates.length > 0) {
-        console.log(`\n🛠️  Backfill candidates (${backfillCandidates.length}): ${backfillCandidates.join(', ')}`);
+        console.log(`\n  🛠️  Backfill candidates (${backfillCandidates.length}): ${backfillCandidates.join(', ')}`);
     } else {
-        console.log('\n✅ No missing-day gaps detected after latest sync');
+        console.log('\n  ✅ No missing-day gaps detected after latest sync');
     }
 
     const unresolvedMissing = [];
@@ -314,19 +311,27 @@ async function main() {
     let backfillDuplicate = 0;
 
     for (const day of backfillCandidates) {
-        process.stdout.write(`  ${day}... `);
+        process.stdout.write(`    ${day}... `);
 
-        const report = await fetchReportLinks(day);
-        if (!report || !report.download_links || report.download_links.length === 0) {
-            console.log('no data');
+        const report = await fetchReportLinks(org.slug, day);
+        if (!report) {
+            // Null means a real API error (non-2xx, non-204) — track for retry
+            unresolvedMissing.push(day);
+            continue;
+        }
+        if (report.empty) {
+            // 204 No Content — day had zero activity, nothing to store
+            console.log('no activity (204)');
+            continue;
+        }
+        if (!report.download_links || report.download_links.length === 0) {
+            console.log('no download links');
             unresolvedMissing.push(day);
             continue;
         }
 
         const dayLines = await downloadLinks(report.download_links);
-
-        // Save raw file
-        const rawPath = path.join(DATA_DIR, `${day}_raw.json`);
+        const rawPath = path.join(DATA_DIR, `${safeSlug}_${day}_raw.json`);
         fs.writeFileSync(rawPath, dayLines.join('\n') + '\n');
 
         const dayMerge = prepareMissingLines(dayLines, existingKeys);
@@ -337,30 +342,54 @@ async function main() {
             const appendData = '\n' + dayMerge.missingLines.map(x => x.line).join('\n') + '\n';
             fs.appendFileSync(DATA_FILE, appendData);
         }
-
         console.log(`✅ ${dayLines.length} entries (${dayMerge.missingLines.length} new, ${dayMerge.duplicates} duplicate)`);
     }
 
-    console.log(`\n📝 Backfill merge: +${backfillAdded} new line(s), ${backfillDuplicate} duplicate key(s) skipped`);
+    console.log(`\n  📝 Backfill merge: +${backfillAdded} new line(s), ${backfillDuplicate} duplicate key(s) skipped`);
 
-    const refreshedLines = readDataFileLines(DATA_FILE);
-    const { maxDay: refreshedMaxDay } = collectExistingDataState(refreshedLines);
-    const nextLastReportDay = refreshedMaxDay || maxDayInData || lastDay;
-
-    if (nextLastReportDay > lastDay) {
-        config.last_report_day = nextLastReportDay;
-        console.log(`✅ Updated last_report_day to ${nextLastReportDay}`);
+    // Use the API-declared report end as the new last_report_day (most reliable indicator)
+    const nextLastReportDay = reportEnd > (lastDay || '') ? reportEnd : (lastDay || '');
+    if (nextLastReportDay !== lastDay) {
+        org.last_report_day = nextLastReportDay;
+        console.log(`  ✅ Updated last_report_day to ${nextLastReportDay}`);
     }
 
-    config.missing_data_days = uniqueSortedDates(unresolvedMissing);
-    if (config.missing_data_days.length > 0) {
-        console.log(`🕳️  Still missing (${config.missing_data_days.length}): ${config.missing_data_days.join(', ')}`);
+    org.missing_data_days = uniqueSortedDates(unresolvedMissing);
+    if (org.missing_data_days.length > 0) {
+        console.log(`  🕳️  Still missing (${org.missing_data_days.length}): ${org.missing_data_days.join(', ')}`);
     } else {
-        console.log('✅ No unresolved missing days');
+        console.log('  ✅ No unresolved missing days');
+    }
+}
+
+// ── Main ────────────────────────────────────────────────────────────────
+async function main() {
+    // Ensure /data/raw directory exists
+    if (!fs.existsSync(DATA_DIR)) {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+
+    const yesterday = getYesterday();
+    const allOrgs = getAllOrgs();
+
+    if (allOrgs.length === 0) {
+        console.error('❌ No organizations found in config.json. Add at least one enterprise with an organization (including "slug").');
+        process.exit(1);
+    }
+
+    // Load existing data state once — shared across all orgs to avoid cross-org duplicates
+    const existingDataLines = readDataFileLines(DATA_FILE);
+    const { existingKeys } = collectExistingDataState(existingDataLines);
+
+    for (const org of allOrgs) {
+        const header = `🏢  ${org.label || org.id}  (${org.slug || 'no slug'})`;
+        console.log(`\n${'─'.repeat(60)}`);
+        console.log(header);
+        console.log('─'.repeat(60));
+        await processOrg(org, yesterday, existingKeys);
     }
 
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2) + '\n');
-
     console.log('\n🎉 Done!');
 }
 

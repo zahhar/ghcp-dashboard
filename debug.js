@@ -41,14 +41,24 @@ const DATA_FILE = path.join(__dirname, 'data', 'data.json');
 const DEBUG_DIR = path.join(__dirname, 'data', 'debug');
 const config    = JSON.parse(fs.readFileSync(path.join(__dirname, 'data', 'config.json'), 'utf8'));
 const TOKEN     = process.env.GITHUB_TOKEN;
-const ORG       = config.org;
+
+// Extract the first org slug from the nested enterprise → organization structure
+function getDefaultOrgSlug() {
+    for (const ent of (config.enterprises || [])) {
+        for (const org of (ent.organizations || [])) {
+            if (org.slug) return org.slug;
+        }
+    }
+    return null;
+}
+const ORG = getDefaultOrgSlug();
 
 if (!TOKEN) {
     console.error('❌ GITHUB_TOKEN not found. Create a .env file with GITHUB_TOKEN=<your token>');
     process.exit(1);
 }
-if (!ORG || ORG === 'YOUR_ORG_NAME') {
-    console.error('❌ Set your GitHub org name in config.json');
+if (!ORG) {
+    console.error('❌ No organization with a "slug" found in config.json enterprises[].organizations[]');
     process.exit(1);
 }
 
@@ -110,8 +120,9 @@ async function downloadFile(url) {
 // ── Download helpers ──────────────────────────────────────────────────────
 async function fetchLinks(endpoint, label) {
     const res = await apiGet(endpoint);
+    if (res.status === 204) { console.log(`ℹ️   204 No Content — no activity recorded for ${label}`); return null; }
     if (res.status === 404) { console.log(`⚠️  404 — no data for ${label}`); return null; }
-    if (res.status !== 200) {
+    if (res.status < 200 || res.status >= 300) {
         console.error(`❌ API error ${res.status} for ${label}: ${res.body.slice(0, 200)}`);
         return null;
     }

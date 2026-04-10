@@ -455,6 +455,16 @@ body {
     filter: grayscale(60%) brightness(0.7);
 }
 
+.never-active-user {
+    opacity: 0.45;
+    filter: grayscale(60%);
+}
+
+.never-active-user:hover {
+    opacity: 0.65;
+    filter: grayscale(40%);
+}
+
 /* Loading state */
 .loading {
     text-align: center;
