@@ -4,16 +4,16 @@
  * update-data.js
  *
  * Fetches Copilot usage metrics with a resilient, gap-aware strategy:
- *   1) Pull latest 28-day data from users-28-day/latest
+ *   1) Pull latest 28-day data from enterprise and organization users-28-day/latest
  *   2) Merge into data.json by unique key (user_id + day)
  *   3) Detect calendar gaps and try per-day backfill (users-1-day)
- *   4) Persist unresolved gaps in config.missing_data_days for catch-up
+ *   4) Persist unresolved gaps in config.{enterprise|organization}.missing_data_days for catch-up
  *
  * Downloads raw NDJSON files to /data/raw, appends only missing entries
  * to data.json, and updates config.json.
  *
- * Requires: .env file with GITHUB_TOKEN
- *           config.json with org and last_report_day
+ * Requires: .env file with token variables referenced by config env_token fields
+ *           config.json with enterprise/org slugs and state fields
  *
  * For data verification use: node debug.js YYYY-MM-DD | node debug.js latest
  */
@@ -47,12 +47,6 @@ const DATA_FILE = path.join(__dirname, 'data', 'data.json');
 const DATA_DIR = path.join(__dirname, 'data', 'raw');
 
 const config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
-const TOKEN = process.env.GITHUB_TOKEN;
-
-if (!TOKEN) {
-    console.error('❌ GITHUB_TOKEN not found. Create a .env file with GITHUB_TOKEN=<your token>');
-    process.exit(1);
-}
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 function addDays(dateStr, n) {
@@ -104,11 +98,24 @@ function httpsGet(url, headers = {}) {
     });
 }
 
-async function fetchReportLinks(orgSlug, day) {
-    const url = `https://api.github.com/orgs/${orgSlug}/copilot/metrics/reports/users-1-day?day=${day}`;
+function getScopeBasePath(scopeType, slug) {
+    if (scopeType === 'enterprise') {
+        return `https://api.github.com/enterprises/${slug}/copilot/metrics/reports`;
+    }
+    return `https://api.github.com/orgs/${slug}/copilot/metrics/reports`;
+}
+
+function getTokenFromEnvVarName(envVarName) {
+    if (!envVarName || typeof envVarName !== 'string') return null;
+    const token = process.env[envVarName];
+    return token ? token.trim() : null;
+}
+
+async function fetchReportLinks(scopeType, slug, token, day) {
+    const url = `${getScopeBasePath(scopeType, slug)}/users-1-day?day=${day}`;
     const res = await httpsGet(url, {
         'Accept': 'application/vnd.github+json',
-        'Authorization': `Bearer ${TOKEN}`,
+        'Authorization': `Bearer ${token}`,
         'X-GitHub-Api-Version': '2026-03-10'
     });
 
@@ -129,11 +136,11 @@ async function fetchReportLinks(orgSlug, day) {
     return JSON.parse(res.body);
 }
 
-async function fetchLatestReport(orgSlug) {
-    const url = `https://api.github.com/orgs/${orgSlug}/copilot/metrics/reports/users-28-day/latest`;
+async function fetchLatestReport(scopeType, slug, token) {
+    const url = `${getScopeBasePath(scopeType, slug)}/users-28-day/latest`;
     const res = await httpsGet(url, {
         'Accept': 'application/vnd.github+json',
-        'Authorization': `Bearer ${TOKEN}`,
+        'Authorization': `Bearer ${token}`,
         'X-GitHub-Api-Version': '2026-03-10'
     });
 
@@ -235,40 +242,46 @@ function prepareMissingLines(candidateLines, existingKeys) {
     return { missingLines, duplicates };
 }
 
-// ── Config helpers ──────────────────────────────────────────────────────
-// Returns direct references to all org objects so mutations persist into config
-function getAllOrgs() {
-    const orgs = [];
-    for (const ent of (config.enterprises || [])) {
-        for (const org of (ent.organizations || [])) {
-            orgs.push(org);
-        }
-    }
-    return orgs;
-}
+// ── Per-scope processing ────────────────────────────────────────────────
+async function processScope(entity, scopeType, yesterday, existingKeys) {
+    const scopeLabel = scopeType === 'enterprise' ? 'Enterprise' : 'Organization';
+    const envTokenName = entity.env_token;
 
-// ── Per-org processing ──────────────────────────────────────────────────
-async function processOrg(org, yesterday, existingKeys) {
-    if (!org.slug) {
-        console.error(`  ❌ Organization "${org.label || org.id}" is missing "slug" — skipping`);
+    if (!envTokenName) {
+        console.log(`  ⏭️  ${scopeLabel} has no env_token — skipping API sync by design`);
         return;
     }
 
-    if (!Array.isArray(org.missing_data_days)) {
-        org.missing_data_days = [];
+    const token = getTokenFromEnvVarName(envTokenName);
+    if (!token) {
+        console.error(`  ❌ ${scopeLabel} env_token points to missing/empty .env variable: ${envTokenName} — skipping`);
+        return;
     }
 
-    const lastDay = org.last_report_day;
+    if (!entity.slug) {
+        console.error(`  ❌ ${scopeLabel} "${entity.label || entity.id}" is missing "slug" — skipping`);
+        return;
+    }
+
+    if (!entity.last_report_day || typeof entity.last_report_day !== 'string') {
+        entity.last_report_day = '';
+    }
+
+    if (!Array.isArray(entity.missing_data_days)) {
+        entity.missing_data_days = [];
+    }
+
+    const lastDay = entity.last_report_day;
     console.log(`  📊 Last report day : ${lastDay || '(none)'}`);
     console.log(`  📅 Yesterday       : ${yesterday}`);
-    if (org.missing_data_days.length) {
-        console.log(`  🕳️  Tracked missing days: ${org.missing_data_days.join(', ')}`);
+    if (entity.missing_data_days.length) {
+        console.log(`  🕳️  Tracked missing days: ${entity.missing_data_days.join(', ')}`);
     }
 
-    const latestReport = await fetchLatestReport(org.slug);
+    const latestReport = await fetchLatestReport(scopeType, entity.slug, token);
     if (!latestReport || !latestReport.download_links || latestReport.download_links.length === 0) {
         console.log('  ⚠️  Latest endpoint returned no data links.');
-        org.missing_data_days = uniqueSortedDates(org.missing_data_days.filter(d => d <= yesterday));
+        entity.missing_data_days = uniqueSortedDates(entity.missing_data_days.filter(d => d <= yesterday));
         return;
     }
 
@@ -282,8 +295,8 @@ async function processOrg(org, yesterday, existingKeys) {
     const latestLines = await downloadLinks(latestLinks);
     console.log(`  ✅ Downloaded ${latestLines.length} line(s) from latest endpoint`);
 
-    const safeSlug = org.slug.replace(/[^a-zA-Z0-9_-]/g, '_');
-    const latestRawPath = path.join(DATA_DIR, `${safeSlug}_${reportStart}_to_${reportEnd}_latest_raw.json`);
+    const safeScopeSlug = `${scopeType}_${entity.slug}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const latestRawPath = path.join(DATA_DIR, `${safeScopeSlug}_${reportStart}_to_${reportEnd}_latest_raw.json`);
     fs.writeFileSync(latestRawPath, latestLines.join('\n') + '\n');
     console.log(`  💾 Saved raw latest report to data/raw/${path.basename(latestRawPath)}`);
 
@@ -297,7 +310,7 @@ async function processOrg(org, yesterday, existingKeys) {
     const daysWithLatestData = getDaysWithData(latestLines);
     const windowDays = dateRange(reportStart, yesterday);
     const gapsFromLatest = windowDays.filter(day => !daysWithLatestData.has(day));
-    const carryMissingDays = (org.missing_data_days || []).filter(day => day <= yesterday);
+    const carryMissingDays = (entity.missing_data_days || []).filter(day => day <= yesterday);
     const backfillCandidates = uniqueSortedDates([...gapsFromLatest, ...carryMissingDays]);
 
     if (backfillCandidates.length > 0) {
@@ -313,7 +326,7 @@ async function processOrg(org, yesterday, existingKeys) {
     for (const day of backfillCandidates) {
         process.stdout.write(`    ${day}... `);
 
-        const report = await fetchReportLinks(org.slug, day);
+        const report = await fetchReportLinks(scopeType, entity.slug, token, day);
         if (!report) {
             // Null means a real API error (non-2xx, non-204) — track for retry
             unresolvedMissing.push(day);
@@ -331,7 +344,7 @@ async function processOrg(org, yesterday, existingKeys) {
         }
 
         const dayLines = await downloadLinks(report.download_links);
-        const rawPath = path.join(DATA_DIR, `${safeSlug}_${day}_raw.json`);
+        const rawPath = path.join(DATA_DIR, `${safeScopeSlug}_${day}_raw.json`);
         fs.writeFileSync(rawPath, dayLines.join('\n') + '\n');
 
         const dayMerge = prepareMissingLines(dayLines, existingKeys);
@@ -350,13 +363,13 @@ async function processOrg(org, yesterday, existingKeys) {
     // Use the API-declared report end as the new last_report_day (most reliable indicator)
     const nextLastReportDay = reportEnd > (lastDay || '') ? reportEnd : (lastDay || '');
     if (nextLastReportDay !== lastDay) {
-        org.last_report_day = nextLastReportDay;
+        entity.last_report_day = nextLastReportDay;
         console.log(`  ✅ Updated last_report_day to ${nextLastReportDay}`);
     }
 
-    org.missing_data_days = uniqueSortedDates(unresolvedMissing);
-    if (org.missing_data_days.length > 0) {
-        console.log(`  🕳️  Still missing (${org.missing_data_days.length}): ${org.missing_data_days.join(', ')}`);
+    entity.missing_data_days = uniqueSortedDates(unresolvedMissing);
+    if (entity.missing_data_days.length > 0) {
+        console.log(`  🕳️  Still missing (${entity.missing_data_days.length}): ${entity.missing_data_days.join(', ')}`);
     } else {
         console.log('  ✅ No unresolved missing days');
     }
@@ -370,23 +383,33 @@ async function main() {
     }
 
     const yesterday = getYesterday();
-    const allOrgs = getAllOrgs();
 
-    if (allOrgs.length === 0) {
-        console.error('❌ No organizations found in config.json. Add at least one enterprise with an organization (including "slug").');
+    if (!Array.isArray(config.enterprises) || config.enterprises.length === 0) {
+        console.error('❌ No enterprises found in config.json. Add at least one enterprise entry.');
         process.exit(1);
     }
 
-    // Load existing data state once — shared across all orgs to avoid cross-org duplicates
+    // Load existing data state once — shared across all scopes to avoid duplicate rows
     const existingDataLines = readDataFileLines(DATA_FILE);
     const { existingKeys } = collectExistingDataState(existingDataLines);
 
-    for (const org of allOrgs) {
-        const header = `🏢  ${org.label || org.id}  (${org.slug || 'no slug'})`;
+    for (const ent of config.enterprises) {
+        const entHeader = `🏬  ${ent.label || ent.id || 'enterprise'}  (${ent.slug || 'no slug'})`;
         console.log(`\n${'─'.repeat(60)}`);
-        console.log(header);
+        console.log(entHeader);
         console.log('─'.repeat(60));
-        await processOrg(org, yesterday, existingKeys);
+
+        await processScope(ent, 'enterprise', yesterday, existingKeys);
+
+        if (Array.isArray(ent.organizations) && ent.organizations.length > 0) {
+            for (const org of ent.organizations) {
+                const orgHeader = `🏢  ${org.label || org.id || 'organization'}  (${org.slug || 'no slug'})`;
+                console.log(`\n  ${'-'.repeat(56)}`);
+                console.log(`  ${orgHeader}`);
+                console.log(`  ${'-'.repeat(56)}`);
+                await processScope(org, 'organization', yesterday, existingKeys);
+            }
+        }
     }
 
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2) + '\n');

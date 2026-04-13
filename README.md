@@ -47,7 +47,7 @@ Project was intentionally built simple and file-based, so you can run it locally
 - `update-data.js` — fetches new Copilot metrics, stores the, under `data/raw/*.json` and appends them to `data/data.json`
 - `ingest-data.js` — imports user-provided NDJSON files from `data/raw/inbox/` into `data/data.json` without calling the GitHub API
 - `debug.js` — downloads hisotrical data to `data/debug/*.json`and compares it with local `data/data.json`
-- `data/config.json` — stores Github Organization name and Last synchronized day
+- `data/config.json` — stores enterprises and organizations with their slugs, token variable names, and last-sync state
 - `data/users.json` — UserId mapping to Display name, Team, Role, Revoked status (all optional)
 - `data/data.json` — all your data used to build a dashboard
 - `data/raw/inbox/` — drop your own NDJSON files here for ingest
@@ -89,19 +89,31 @@ Open `http://localhost:3000` - you should see mocked data loaded.
 
 ### 1) Prerequisites
 
-- All Github Copilot users you want to monitor belong to the same Enterprise and same Organization within this Enterprise
-- You creted a [GitHub personal access token (classic)](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens) with `read:org`, `manage_billing:copilot` or `read:enterprise` scopes.
-- [Copilot usage metrics](https://docs.github.com/en/enterprise-cloud@latest/copilot/how-tos/administer-copilot/manage-for-enterprise/manage-enterprise-policies#defining-policies-for-your-enterprise) policy must be enabled for the organization. 
+- You created one or more [GitHub personal access tokens (classic)](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens) with the appropriate scopes:
+  - Enterprise-level metrics: `read:enterprise` or `manage_billing:copilot`
+  - Organization-level metrics: `read:org` or `manage_billing:copilot`
+- [Copilot usage metrics](https://docs.github.com/en/enterprise-cloud@latest/copilot/how-tos/administer-copilot/manage-for-enterprise/manage-enterprise-policies#defining-policies-for-your-enterprise) policy must be enabled.
 
 ### 3) Configure environment and project
 
-1. Add `GITHUB_TOKEN` to `.env` (use `.env.example` as a template).
+1. Add your token variable(s) to `.env` (use `.env.example` as a template). Each token variable name is referenced from `config.json` via the `env_token` field, for example:
+   ```
+   GITHUB_ENTERPRISE_TOKEN=ghp_...
+   GITHUB_ORG_TOKEN=ghp_...
+   ```
 2. Set `USE_MOCK_DATA=false` in `.env` before productive use, so data is loaded from `/data` instead of `/mock`.
-3. Copy `mock\config.json` to `data\config.json`
-4. Edit `data\config.json`:
-	 - `org`: GitHub organization name
-	 - `last_report_day`: set inital day for incremental updates; note that Github Copilot Metrics API provides data only for last 28 days, so setting ot to earlier date won't bring you any data.
-5. (optionally) Edit `data\users.json` to map Github usernames to human readable names, assign roles, indicate revoked licenses, and group users into teams. All fields are optional. 
+3. Copy `mock/config.json` to `data/config.json`
+4. Edit `data/config.json`. Each enterprise and organization entry that should be synced via the API must have:
+   - `slug` — the GitHub enterprise or organization slug used in API URLs
+   - `env_token` — name of the `.env` variable holding the access token for that scope
+   - `last_report_day` — set to `""` on first run; updated automatically after each sync
+   - `missing_data_days` — leave as `[]`; managed automatically
+
+   Entries **without** an `env_token` field are skipped during API sync (useful for display-only entries).
+
+   Enterprise and organization metrics are fetched independently — enterprise-level data is pulled first, then each org under it.
+
+5. (optionally) Edit `data/users.json` to map Github usernames to human readable names, assign roles, indicate revoked licenses, and group users into teams. All fields are optional. 
 
    Each entry looks like:
    ```json
@@ -121,12 +133,13 @@ Open `http://localhost:3000` - you should see mocked data loaded.
 npm run update
 ```
 
-This runs `update-data.js`, which:
+This runs `update-data.js`, which for each configured enterprise and organization (those with an `env_token`):
 
-- fetches daily reports from `last_report_day + 1` to yesterday,
-- saves raw files to `data/raw/`,
-- appends lines to `data/data.json`,
-- updates `data/config.json` with the latest successful day.
+- fetches the latest 28-day report from the enterprise endpoint, then from each org endpoint,
+- backfills any calendar gaps via per-day API calls,
+- saves raw NDJSON files to `data/raw/`,
+- appends new records to `data/data.json` (deduplicates by `user_id:day`),
+- updates `last_report_day` and `missing_data_days` in `data/config.json` for each scope.
 
 ## Data flow and freshness
 

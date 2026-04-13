@@ -3,11 +3,16 @@
     {
       "id": "your-enterprise-id",
       "label": "Your Enterprise",
+      "slug": "your-github-enterprise",
+      "env_token": "GITHUB_ENTERPRISE_TOKEN",
+      "last_report_day": "",
+      "missing_data_days": [],
       "organizations": [
         {
           "id": "your-org-id",
           "label": "Your Organization",
           "slug": "your-github-organization",
+          "env_token": "GITHUB_ORG_TOKEN",
           "last_report_day": "2026-03-01",
           "missing_data_days": []
         }
