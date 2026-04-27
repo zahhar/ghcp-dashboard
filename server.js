@@ -100,12 +100,21 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
     } catch (e) { /* ignore — labels will fall back to raw IDs */ }
     const enterpriseLabelMap = {};
     const orgLabelMap = {};
+    const enterpriseFilterKnownUsersMap = {};
+    const orgFilterKnownUsersMap = {};
     if (Array.isArray(config.enterprises)) {
         for (const e of config.enterprises) {
             if (e.id != null) enterpriseLabelMap[String(e.id)] = e.label || String(e.id);
+            if (e.id != null) enterpriseFilterKnownUsersMap[String(e.id)] = e.filter_to_known_users === true;
             if (Array.isArray(e.organizations)) {
                 for (const o of e.organizations) {
                     if (o.id != null) orgLabelMap[String(o.id)] = o.label || String(o.id);
+                    if (o.id != null) {
+                        const orgFilterValue = o.filter_to_known_users;
+                        const entFilterValue = e.filter_to_known_users;
+                        // Org-level flag overrides enterprise-level; otherwise inherit enterprise setting.
+                        orgFilterKnownUsersMap[String(o.id)] = orgFilterValue === true || (orgFilterValue !== false && entFilterValue === true);
+                    }
                 }
             }
         }
@@ -167,6 +176,19 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             }
 
             const user = entry.user_login || 'unknown';
+            const organizationId = entry.organization_id != null ? String(entry.organization_id) : null;
+            const enterpriseId = entry.enterprise_id != null ? String(entry.enterprise_id) : null;
+
+            // Apply scope-aware filtering against users.json when enabled in config.
+            const shouldFilterKnownUsers = organizationId && organizationId in orgFilterKnownUsersMap
+                ? orgFilterKnownUsersMap[organizationId]
+                : (enterpriseId && enterpriseId in enterpriseFilterKnownUsersMap
+                    ? enterpriseFilterKnownUsersMap[enterpriseId]
+                    : false);
+
+            if (shouldFilterKnownUsers && !Object.prototype.hasOwnProperty.call(userMapping, user)) {
+                continue;
+            }
 
             if (!userStats[user]) {
                 userStats[user] = {
