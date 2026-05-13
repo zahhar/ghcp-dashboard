@@ -21,9 +21,10 @@
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
+const ROOT_DIR = path.resolve(__dirname, '..');
 
 // ── Load .env manually (no external deps) ──────────────────────────────
-const envPath = path.join(__dirname, '.env');
+const envPath = path.join(ROOT_DIR, '.env');
 if (fs.existsSync(envPath)) {
     for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
         const trimmed = line.trim();
@@ -42,9 +43,9 @@ if (process.env.USE_MOCK_DATA === 'true') {
 }
 
 // ── Config ──────────────────────────────────────────────────────────────
-const CONFIG_PATH = path.join(__dirname, 'data', 'config.json');
-const DATA_FILE = path.join(__dirname, 'data', 'data.json');
-const DATA_DIR = path.join(__dirname, 'data', 'raw');
+const CONFIG_PATH = path.join(ROOT_DIR, 'data', 'config.json');
+const DATA_FILE = path.join(ROOT_DIR, 'data', 'data.json');
+const DATA_DIR = path.join(ROOT_DIR, 'data', 'raw');
 
 const config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
 

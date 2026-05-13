@@ -6,8 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "update": "node update-data.js",
-    "ingest": "node ingest-data.js",
+    "update": "node scripts/update-data.js",
+    "ingest": "node scripts/ingest-data.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

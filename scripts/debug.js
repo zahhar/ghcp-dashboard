@@ -22,9 +22,10 @@
 const fs   = require('fs');
 const path = require('path');
 const https = require('https');
+const ROOT_DIR = path.resolve(__dirname, '..');
 
 // ── Load .env ─────────────────────────────────────────────────────────────
-const envPath = path.join(__dirname, '.env');
+const envPath = path.join(ROOT_DIR, '.env');
 if (fs.existsSync(envPath)) {
     for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
         const trimmed = line.trim();
@@ -37,9 +38,9 @@ if (fs.existsSync(envPath)) {
 }
 
 // ── Config ────────────────────────────────────────────────────────────────
-const DATA_FILE = path.join(__dirname, 'data', 'data.json');
-const DEBUG_DIR = path.join(__dirname, 'data', 'debug');
-const config    = JSON.parse(fs.readFileSync(path.join(__dirname, 'data', 'config.json'), 'utf8'));
+const DATA_FILE = path.join(ROOT_DIR, 'data', 'data.json');
+const DEBUG_DIR = path.join(ROOT_DIR, 'data', 'debug');
+const config    = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'data', 'config.json'), 'utf8'));
 const TOKEN     = process.env.GITHUB_TOKEN;
 
 // Extract the first org slug from the nested enterprise → organization structure

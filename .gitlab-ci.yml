@@ -1,0 +1,84 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# ghcp-stats deploy pipeline
+#
+# Stages:
+#   build  — Kaniko builds the Docker image and pushes it to GitLab registry
+#   deploy — kubectl updates the running Deployment on the GKE cluster
+#
+# GitLab built-in variables used (no manual setup needed):
+#   CI_REGISTRY              — GitLab container registry hostname
+#   CI_REGISTRY_USER         — Registry user (auto-injected per-job)
+#   CI_REGISTRY_PASSWORD     — Registry token (auto-injected per-job)
+#   CI_REGISTRY_IMAGE        — Full image path for this project (always lowercase)
+#   CI_COMMIT_SHA            — Full commit SHA, used to tag the image
+#
+# Variables you must set in GitLab → Settings → CI/CD → Variables:
+#   K8S_NAMESPACE        — Kubernetes namespace where your pod runs  (e.g. ghcp)
+#   K8S_DEPLOYMENT_NAME  — Name of the Kubernetes Deployment         (e.g. ghcp-stats)
+#   K8S_CONTAINER_NAME   — Container name inside the pod spec        (e.g. ghcp-stats)
+# ──────────────────────────────────────────────────────────────────────────────
+
+stages:
+  - build
+  - deploy
+
+variables:
+  KANIKO_IMAGE: "gcr.io/kaniko-project/executor:debug"
+  # Canonical image references — CI_REGISTRY_IMAGE is already lowercase
+  IMAGE_SHA: "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
+  IMAGE_LATEST: "$CI_REGISTRY_IMAGE:latest"
+  RUNNER_TAG_PROD: shelter-scor-gits-prod
+
+.runner_prod:
+  tags:
+    - $RUNNER_TAG_PROD
+
+# ── Stage 1: build ────────────────────────────────────────────────────────────
+build-image:
+  stage: build
+  extends: .runner_prod
+  image: $KANIKO_IMAGE
+  resource_group: build-image
+  before_script:
+    # Authenticate Kaniko with GitLab container registry
+    - mkdir -p /kaniko/.docker
+    - |
+      echo "{\"auths\":{\"$CI_REGISTRY\":{\"auth\":\"$(echo -n "$CI_REGISTRY_USER:$CI_REGISTRY_PASSWORD" | base64 -w0)\"}}}" \
+        > /kaniko/.docker/config.json
+  script:
+    - echo "Building image $IMAGE_SHA ..."
+    - /kaniko/executor
+        --context ./
+        --dockerfile ./Dockerfile
+        --log-format=color
+        --log-timestamp=true
+        --cache
+        --cache-repo="$CI_REGISTRY_IMAGE/cache"
+        --destination="$IMAGE_LATEST"
+        --destination="$IMAGE_SHA"
+  retry:
+    max: 2
+    when:
+      - runner_system_failure
+      - stuck_or_timeout_failure
+
+# ── Stage 2: deploy ───────────────────────────────────────────────────────────
+deploy:
+  stage: deploy
+  extends: .runner_prod
+  # Lightweight kubectl image; runner is in-cluster so no kubeconfig setup needed
+  image: bitnami/kubectl:latest
+  script:
+    - test -n "$K8S_NAMESPACE" || (echo "K8S_NAMESPACE is required" && exit 1)
+    - test -n "$K8S_DEPLOYMENT_NAME" || (echo "K8S_DEPLOYMENT_NAME is required" && exit 1)
+    - test -n "$K8S_CONTAINER_NAME" || (echo "K8S_CONTAINER_NAME is required" && exit 1)
+    - echo "Deploying $IMAGE_SHA to namespace $K8S_NAMESPACE ..."
+    - kubectl set image deployment/$K8S_DEPLOYMENT_NAME
+        $K8S_CONTAINER_NAME=$IMAGE_SHA
+        --namespace=$K8S_NAMESPACE
+    - kubectl rollout status deployment/$K8S_DEPLOYMENT_NAME
+        --namespace=$K8S_NAMESPACE
+        --timeout=120s
+  only:
+    - main
+

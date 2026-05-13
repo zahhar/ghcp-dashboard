@@ -20,9 +20,10 @@
 
 const fs = require('fs');
 const path = require('path');
+const ROOT_DIR = path.resolve(__dirname, '..');
 
 // ── Mock-mode guard ─────────────────────────────────────────────────────
-const envPath = path.join(__dirname, '.env');
+const envPath = path.join(ROOT_DIR, '.env');
 if (fs.existsSync(envPath)) {
     for (const line of fs.readFileSync(envPath, 'utf8').split('\n')) {
         const trimmed = line.trim();
@@ -40,9 +41,9 @@ if (process.env.USE_MOCK_DATA === 'true') {
 }
 
 // ── Paths ───────────────────────────────────────────────────────────────
-const DATA_FILE   = path.join(__dirname, 'data', 'data.json');
-const INBOX_DIR   = path.join(__dirname, 'data', 'raw', 'inbox');
-const DONE_DIR    = path.join(__dirname, 'data', 'raw', 'processed');
+const DATA_FILE   = path.join(ROOT_DIR, 'data', 'data.json');
+const INBOX_DIR   = path.join(ROOT_DIR, 'data', 'raw', 'inbox');
+const DONE_DIR    = path.join(ROOT_DIR, 'data', 'raw', 'processed');
 
 // ── Helpers (mirrors update-data.js conventions) ────────────────────────
 function getRecordKey(rec) {
