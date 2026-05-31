@@ -6,6 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
+    "stop": "lsof -ti :8080 | xargs kill -9 2>/dev/null || true",
+    "restart": "npm run stop && npm run start",
     "update": "node scripts/update-data.js",
     "ingest": "node scripts/ingest-data.js",
     "test": "echo \"Error: no test specified\" && exit 1"

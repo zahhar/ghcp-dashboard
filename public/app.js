@@ -1,12 +1,29 @@
 let globalUsers = [];
-let currentSortColumn = 'total_loc_changed';
+let globalLastDay = ''; // last active day across all users in current dataset
+let currentSortColumn = 'total_output';
 let currentSortDesc = true;
 let currentTeamFilter = '';
 let currentScopeFilter = ''; // 'e:ID' = enterprise, 'o:ID' = organization
 let currentSearchQuery = '';
 let currentStatusFilter = 'active';
+let currentPhaseFilter = '';
 let prevMonthStats = null;
 let prevMonthTotals = null;
+let modelDonuts = []; // model names from config.model_donuts
+
+const PHASE_LABELS = {
+    0: '0: No cohort',
+    1: '1: Code first',
+    2: '2: Agent first',
+    3: '3: Multi-agent'
+};
+
+const PHASE_DESCRIPTIONS = {
+    0: 'Phase 0 — No cohort: User did not meet the engagement criteria for any phase',
+    1: 'Phase 1 — Code first: Engaged with code completion and/or IDE agent mode (at least 2 days in the last 28-day window)',
+    2: 'Phase 2 — Agent first: Engaged with a single GitHub-based agent surface — Copilot cloud agent, code review, or CLI (at least 2 days)',
+    3: 'Phase 3 — Multi-agent: Engaged with two or more GitHub-based agent surfaces, or with the new GitHub Copilot app'
+};
 
 // Show 🚀 instead of a numeric % badge when positive growth exceeds this threshold (%)
 const ROCKET_THRESHOLD = 200;
@@ -46,6 +63,18 @@ function formatNumber(num) {
     return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, "'");
 }
 
+// Format large token counts: round to nearest 10K, display as e.g. 120K, 1.25M, 2B
+function formatTokens(n) {
+    if (!n) return null;
+    const rounded = Math.round(n / 10000) * 10000;
+    if (rounded >= 1e9) return (Math.round(rounded / 1e8) / 10).toFixed(rounded % 1e9 === 0 ? 0 : 1) + 'B';
+    if (rounded >= 1e6) {
+        const m = rounded / 1e6;
+        return (Number.isInteger(m) ? m : m.toFixed(2).replace(/\.?0+$/, '')) + 'M';
+    }
+    return Math.round(rounded / 1000) + 'K';
+}
+
 // sign: +1 for added (show +N), -1 for deleted (show -N); zero is always unsigned
 function signedLoc(n, sign) {
     if (!n) return '0';
@@ -76,6 +105,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.getElementById('status-filter').addEventListener('change', (e) => {
         currentStatusFilter = e.target.value;
+        renderUsersTable();
+    });
+
+    document.getElementById('phase-filter').addEventListener('change', (e) => {
+        currentPhaseFilter = e.target.value;
         renderUsersTable();
     });
 
@@ -157,8 +191,10 @@ async function fetchDashboardData(month = '') {
         }
 
         globalUsers = data.users || [];
+        globalLastDay = globalUsers.reduce((max, u) => (u.last_active_day > max ? u.last_active_day : max), '');
         prevMonthStats = data.prevMonthStats || null;
         prevMonthTotals = data.prevMonthTotals || null;
+        if (Array.isArray(data.modelDonuts)) modelDonuts = data.modelDonuts;
 
         // Render Tables
         renderUsersTable();
@@ -168,6 +204,25 @@ async function fetchDashboardData(month = '') {
         console.error('Error fetching stats:', error);
         document.getElementById('users-body').innerHTML = `<tr><td colspan="12" class="loading">Failed to load data. Make sure backend is running.</td></tr>`;
     }
+}
+
+// Compute current streak: consecutive working days active going backwards from the user's own last active day.
+// activeDaysList: sorted array of 'YYYY-MM-DD' strings (already filtered to the selected period).
+// lastActiveDay: the user's own last active day used as the anchor.
+function computeCurrentStreak(activeDaysList, lastActiveDay) {
+    if (!activeDaysList || activeDaysList.length === 0 || !lastActiveDay) return 0;
+    const activeSet = new Set(activeDaysList);
+    const d = new Date(lastActiveDay + 'T12:00:00'); // noon avoids DST boundary issues
+    let streak = 0;
+    for (;;) {
+        const dow = d.getDay(); // 0=Sun, 6=Sat
+        if (dow === 0 || dow === 6) { d.setDate(d.getDate() - 1); continue; } // skip weekend
+        const dateStr = localISODate(d);
+        if (!activeSet.has(dateStr)) break;
+        streak++;
+        d.setDate(d.getDate() - 1);
+    }
+    return streak;
 }
 
 // Returns YYYY-MM-DD in LOCAL time (avoids UTC-offset date shift from toISOString)
@@ -210,7 +265,7 @@ function setupTableSorting() {
     const sortMapping = {
         0: null, // # is not sortable
         1: 'human_name',
-        2: 'total_loc_changed',
+        2: 'total_output',
         3: 'turns',
         4: 'doc_loc_changed',
         5: 'code_loc_changed',
@@ -284,8 +339,9 @@ function fuzzyMatch(query, text) {
 
 function matchesSearch(user, query) {
     if (!query) return true;
+    const accountsStr = Array.isArray(user.accounts) ? user.accounts.join(' ') : user.user_login;
     const fields = [
-        user.human_name, user.user_login, user.team,
+        user.human_name, accountsStr, user.team,
         user.enterprise_label, user.organization_label,
         user.favorite_language, user.favorite_model, user.favorite_ide
     ];
@@ -360,6 +416,12 @@ function renderUsersTable() {
         sortedUsers = sortedUsers.filter(u => matchesSearch(u, currentSearchQuery));
     }
 
+    // Apply phase filter
+    if (currentPhaseFilter !== '') {
+        const pn = parseInt(currentPhaseFilter, 10);
+        sortedUsers = sortedUsers.filter(u => u.ai_adoption_phase_number === pn);
+    }
+
     // Update header stats to reflect current filter
     const filteredOutput = sortedUsers.reduce((acc, u) => acc + u.total_suggested_changed + u.total_loc_changed, 0);
     const filteredInteractions = sortedUsers.reduce((acc, u) => acc + u.turns, 0);
@@ -389,8 +451,8 @@ function renderUsersTable() {
             if (a.never_active && !b.never_active) return 1;
             if (!a.never_active && b.never_active) return -1;
 
-            let valA = a[currentSortColumn];
-            let valB = b[currentSortColumn];
+            let valA = currentSortColumn === 'total_output' ? (a.total_suggested_changed + a.total_loc_changed) : a[currentSortColumn];
+            let valB = currentSortColumn === 'total_output' ? (b.total_suggested_changed + b.total_loc_changed) : b[currentSortColumn];
 
             // string vs number comparisons
             if (typeof valA === 'string' && typeof valB === 'string') {
@@ -434,16 +496,17 @@ function renderUsersTable() {
                     <span style="font-weight: 600;">${user.human_name}${revokedMark}${newUserMark}</span>
                     <span style="font-size: 0.8em; color: var(--text-muted); font-weight: 400;">${user.role || user.user_login}</span>
                     <span style="font-size: 0.8em; color: var(--text-muted); font-weight: 400;">${user.team || ''}</span>
-                    ${user.enterprise_label || user.organization_label ? `<span style="font-size: 0.75em; color: var(--text-muted); font-weight: 400; opacity: 0.8;">${[user.enterprise_label, user.organization_label].filter(Boolean).join(' · ')}</span>` : ''}
+                    ${Array.isArray(user.accounts) && user.accounts.length > 1 ? `<span style="font-size: 0.7em; color: var(--text-muted); font-weight: 400; opacity: 0.7;">🔑 ${user.accounts.length} accounts</span>` : (user.enterprise_label || user.organization_label ? `<span style="font-size: 0.75em; color: var(--text-muted); font-weight: 400; opacity: 0.8;">${[user.enterprise_label, user.organization_label].filter(Boolean).join(' · ')}</span>` : '')}
                 </div>
             </td>
-            <!-- Output: grand total (suggested+applied) | 💡 suggested LOC | ✏️ applied LOC -->
-            <td style="white-space: nowrap;" title="Grand total = suggested + applied LOC&#10;💡 Suggested LOC = loc_suggested_to_add + loc_suggested_to_delete&#10;✏️ Applied LOC = loc_added + loc_deleted">
+            <!-- Output: grand total (suggested+applied) | 💡 suggested LOC | ✏️ applied LOC | 🔤 output tokens -->
+            <td style="white-space: nowrap;" title="Grand total = suggested + applied LOC&#10;💡 Suggested LOC = loc_suggested_to_add + loc_suggested_to_delete&#10;✏️ Applied LOC = loc_added + loc_deleted&#10;🔤 CLI output tokens generated by the model">
                 ${formatNumber(user.total_suggested_changed + user.total_loc_changed)}
                 <br>
                 <span style="font-size:0.8em;color:var(--text-muted)">💡 ${formatNumber(user.total_suggested_changed)}</span>
                 <br>
                 <span style="font-size:0.8em;color:var(--text-muted)">✏️ ${formatNumber(user.total_loc_changed)}</span>
+                ${formatTokens(user.cli_output_tokens_sum) ? `<br><span style="font-size:0.8em;color:var(--text-muted)">🔤 ${formatTokens(user.cli_output_tokens_sum)}</span>` : ''}
             </td>
             <!-- Turns: total interactions | 🏃 output LOC per turn | 🎯 acceptance rate -->
             <td title="Total interaction turns&#10;🏃 Output LOC per turn (suggested + applied)&#10;🎯 Acceptance Rate: code_acceptance_activity / code_generation_activity">
@@ -473,25 +536,30 @@ function renderUsersTable() {
             <td style="white-space: nowrap;" title="PERF = max(code added, code deleted) / active days&#10;${formatNumber(user.perf_score)} loc/day">
                 <span>${formatNumber(user.perf_score)}</span>
                 ${prev ? diffBadge(user.perf_score, prev.perf_score, true) : ''}
+${(() => { const pn = user.ai_adoption_phase_number ?? 0; const prevPn = prev ? (prev.ai_adoption_phase_number ?? null) : null; const changed = prevPn !== null && prevPn !== pn; return `<br><span style="font-size:0.75em;color:var(--text-muted);cursor:help" title="${PHASE_DESCRIPTIONS[pn] || ''}">${PHASE_LABELS[pn] || ('Phase ' + pn)}${changed ? ' ' + (pn > prevPn ? '<span class="diff-badge diff-up">▲</span>' : '<span class="diff-badge diff-down">▼</span>') : ''}</span>`; })()}
             </td>
             <td style="max-width: 7rem;" title="${user.all_languages_list && user.all_languages_list.length ? 'Languages: ' + user.all_languages_list.join(', ') : ''}">${user.favorite_language}</td>
             <td style="max-width: 8rem; overflow-wrap: break-word;" title="${user.all_models_list && user.all_models_list.length ? 'Models: ' + user.all_models_list.join(', ') : ''}">${user.favorite_model}</td>
             <td style="white-space: nowrap;" title="${user.all_ides_list && user.all_ides_list.length ? 'IDEs: ' + user.all_ides_list.join(', ') : ''}">${user.favorite_ide}</td>
-            <td style="white-space: nowrap;">
+            <td style="white-space: nowrap;" title="🤖 Agent days: days where Copilot Agent mode was used&#10;💬 Chat days: days where Copilot Chat was used&#10;⌨️ CLI days: days where Copilot CLI was used&#10;🔍 Code Review days: days where Copilot reviewed code (active = user requested, passive = auto-triggered)&#10;☁️ Cloud Agent days: days where Copilot cloud agent was invoked">
                 ${user.never_active
                     ? '<span style="font-size:0.85em;color:var(--text-muted);opacity:0.7">Never used</span>'
                     : `<span style="font-size:0.8em;color:var(--text-muted)">🤖&nbsp;${user.agent_days_count}</span>
                 <br>
                 <span style="font-size:0.8em;color:var(--text-muted)">💬&nbsp;${user.chat_days_count}</span>
                 <br>
-                <span style="font-size:0.8em;color:var(--text-muted)">⌨️&nbsp;${user.cli_days_count}</span>`}
+                <span style="font-size:0.8em;color:var(--text-muted)">⌨️&nbsp;${user.cli_days_count}</span>${user.code_review_days_count ? `
+                <br>
+                <span style="font-size:0.8em;color:var(--text-muted)">🔍&nbsp;${user.code_review_days_count}</span>` : ''}${user.cloud_agent_days_count ? `
+                <br>
+                <span style="font-size:0.8em;color:var(--text-muted)">☁️&nbsp;${user.cloud_agent_days_count}</span>` : ''}`}
             </td>
             <td style="color:var(--text-muted); font-size: 0.9em; white-space: nowrap;">
                 ${user.never_active
                     ? '<span style="font-size:0.85em;opacity:0.5">— no activity —</span>'
                     : `${getFriendlyDate(user.last_active_day)}
                 <br>
-                <span style="font-size:0.8em;">${user.active_days_count} days total ${prev ? diffAbsBadge(user.active_days_count, prev.active_days_count) : ''}</span>`}
+                <span style="font-size:0.8em;">${user.active_days_count} days total ${prev ? diffAbsBadge(user.active_days_count, prev.active_days_count) : ''}</span>${(() => { const s = computeCurrentStreak(user.active_days_list, user.last_active_day); return s > 0 ? `<br><span style="font-size:0.8em;">🔥&nbsp;${s}d streak</span>` : ''; })()}`}
             </td>
         `;
 
@@ -517,11 +585,8 @@ function renderUsersTable() {
     });
 }
 
-function buildUserMetaSection(user) {
+function buildUserMetaSection(user, { showIdes = true } = {}) {
     const rows = [];
-    if (user.enterprise_label) {
-        rows.push(`<div class="meta-row"><span class="meta-label">Enterprise:</span> ${user.enterprise_label}</div>`);
-    }
     if (user.organization_label) {
         rows.push(`<div class="meta-row"><span class="meta-label">Organization:</span> ${user.organization_label}</div>`);
     }
@@ -531,7 +596,7 @@ function buildUserMetaSection(user) {
     if (user.all_models_list && user.all_models_list.length) {
         rows.push(`<div class="meta-row"><span class="meta-label">Models:</span> ${user.all_models_list.join(', ')}</div>`);
     }
-    if (user.all_ides_list && user.all_ides_list.length) {
+    if (showIdes && user.all_ides_list && user.all_ides_list.length) {
         const ideLabels = user.all_ides_list.map(ide => {
             const v = user.ide_versions && user.ide_versions[ide];
             if (v) {
@@ -556,12 +621,61 @@ function buildUserMetaSection(user) {
 
 function openUserModal(user) {
     const overlay = document.getElementById('user-modal');
+    const accounts = Array.isArray(user.accounts) ? user.accounts : [user.user_login];
+    const accountsLabel = accounts.length > 1
+        ? `<span style="font-size:0.75em;color:var(--text-muted);font-weight:400">${accounts.join(' · ')}</span>`
+        : `<span style="font-size:0.75em;color:var(--text-muted);font-weight:400">${user.user_login}</span>`;
     const roleAndLogin = user.role
-        ? `${user.role}  ·  <span style="font-size:0.75em;color:var(--text-muted);font-weight:400">${user.user_login}</span>`
-        : `<span style="font-size:0.8em;color:var(--text-muted);font-weight:400">${user.user_login}</span>`;
+        ? `${user.role}  ·  ${accountsLabel}`
+        : accountsLabel;
     let titleHTML = user.human_name + (user.team ? '  ·  ' + user.team : '') + '  ·  ' + roleAndLogin;
     document.getElementById('modal-title').innerHTML = titleHTML;
-    document.getElementById('modal-body').innerHTML = buildCombinedChart(user.daily || [], currentMonthFilter) + buildUserMetaSection(user);
+
+    // Build chart section: if user has multiple accounts, show aggregate + per-account charts
+    let chartHTML = '';
+    const accountDaily = user.account_daily || {};
+    const accountIdes = user.account_ides || {};
+    const accountCli = user.account_cli || {};
+
+    function buildAccountIdeCliHTML(login) {
+        const acct = accountIdes[login];
+        const cliVer = accountCli[login];
+        const parts = [];
+        if (acct && acct.ides && acct.ides.length) {
+            const ideLabels = acct.ides.map(ide => {
+                const v = acct.ide_versions && acct.ide_versions[ide];
+                if (v) {
+                    const detail = [];
+                    if (v.ide_version) detail.push(v.ide_version);
+                    if (v.plugin && v.plugin_version) detail.push(`${v.plugin} ${v.plugin_version}`);
+                    else if (v.plugin) detail.push(v.plugin);
+                    return detail.length ? `${ide} <span style="color:var(--text-muted);font-size:0.85em">(${detail.join(', ')})</span>` : ide;
+                }
+                return ide;
+            });
+            parts.push(`<span style="font-size:0.8em;color:var(--text-muted)"><b>IDE:</b> ${ideLabels.join(', ')}</span>`);
+        }
+        if (cliVer) {
+            parts.push(`<span style="font-size:0.8em;color:var(--text-muted)"><b>CLI:</b> ${cliVer}</span>`);
+        }
+        return parts.length ? `<div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:0.5rem">${parts.join('')}</div>` : '';
+    }
+
+    if (accounts.length > 1) {
+        // Aggregate chart first
+        chartHTML += `<div style="margin-bottom:0.5rem"><div style="font-size:0.8em;color:var(--text-muted);margin-bottom:4px;font-weight:600">📊 Combined (all accounts)</div>${buildCombinedChart(user.daily || [], currentMonthFilter)}</div>`;
+        // Per-account charts below
+        for (const login of accounts) {
+            const acctData = accountDaily[login] || [];
+            const ideCliHTML = buildAccountIdeCliHTML(login);
+            const enterpriseSuffix = user.enterprise_label ? ` (${user.enterprise_label})` : '';
+            chartHTML += `<hr style="border:none;border-top:1px solid var(--border);margin:0.75rem 0"><div><div style="font-size:0.8em;color:var(--text-muted);margin-bottom:4px;font-weight:600">🔑 ${login}${enterpriseSuffix}</div>${ideCliHTML}${buildCombinedChart(acctData, currentMonthFilter)}</div>`;
+        }
+    } else {
+        chartHTML = buildCombinedChart(user.daily || [], currentMonthFilter);
+    }
+
+    document.getElementById('modal-body').innerHTML = chartHTML + buildUserMetaSection(user, { showIdes: accounts.length === 1 });
     overlay.style.display = 'flex';
 
     function close() {
@@ -706,7 +820,7 @@ function renderDAUChart() {
     const container = document.getElementById('dau-chart-container');
     if (!container) return;
     if (!globalUsers.length) { container.innerHTML = ''; return; }
-    const filteredUsers = currentTeamFilter ? globalUsers.filter(u => u.team === currentTeamFilter) : globalUsers;
+    const filteredUsers = globalUsers.filter(u => !u.revoked && (!currentTeamFilter || u.team === currentTeamFilter));
     container.innerHTML = buildDAUChart(filteredUsers, filteredUsers.length, currentMonthFilter);
     const avgStat = document.getElementById('dau-avg-stat');
     if (avgStat) {
@@ -1016,11 +1130,54 @@ function renderDonutSection(filteredUsers) {
     if (totalDocLoc  > 0) locByActivity['Steering'] = totalDocLoc;
 
     const splitModelLabel = label => { const f = label.indexOf('-'); if (f === -1) return [label]; const s = label.indexOf('-', f + 1); return s === -1 ? [label] : [label.slice(0, s), label.slice(s + 1)]; };
-    document.getElementById('donut-model').innerHTML    = buildDonutChart(locByModel,        'by Model', splitModelLabel);
-    document.getElementById('donut-language').innerHTML = buildDonutChart(locByFeature,      'by Feature');
-    document.getElementById('donut-ide').innerHTML      = buildDonutChart(locByIde,          'by IDE');
-    document.getElementById('donut-activity').innerHTML = buildDonutChart(locByActivity,     'by Activity');
-    document.getElementById('donut-feature').innerHTML  = buildDonutChart(locByCodeLanguage, 'Coding by Language');
-    document.getElementById('donut-syntax').innerHTML   = buildDonutChart(locByDocLanguage,  'Steering by Syntax');
+
+    // Consolidate doc-language labels before building the Steering by Syntax donut
+    const DOC_LANG_ALIASES = { instructions: 'skills', prompt: 'skills', skill: 'skills', text: 'markdown', plaintext: 'markdown', mermaid: 'markdown' };
+    const locByDocLanguageNorm = {};
+    for (const [lang, val] of Object.entries(locByDocLanguage)) {
+        const key = DOC_LANG_ALIASES[lang.toLowerCase()] || lang;
+        locByDocLanguageNorm[key] = (locByDocLanguageNorm[key] || 0) + val;
+    }
+
+    document.getElementById('donut-model').innerHTML    = buildDonutChart(locByModel,            'by Model', splitModelLabel);
+    document.getElementById('donut-language').innerHTML = buildDonutChart(locByFeature,          'by Feature');
+    document.getElementById('donut-ide').innerHTML      = buildDonutChart(locByIde,              'by IDE');
+    document.getElementById('donut-activity').innerHTML = buildDonutChart(locByActivity,         'by Activity');
+    document.getElementById('donut-feature').innerHTML  = buildDonutChart(locByCodeLanguage,     'Coding by Language');
+    document.getElementById('donut-syntax').innerHTML   = buildDonutChart(locByDocLanguageNorm,  'Steering by Syntax');
+
+    // Phase distribution — null users count as phase 0 (No cohort)
+    const usersByPhase = {};
+    for (const u of filteredUsers) {
+        const pn = u.ai_adoption_phase_number ?? 0;
+        const label = PHASE_LABELS[pn] || ('Phase ' + pn);
+        usersByPhase[label] = (usersByPhase[label] || 0) + 1;
+    }
+    document.getElementById('donut-phase').innerHTML = buildDonutChart(usersByPhase, 'by AI Adoption Phase');
+
+    // Per-model feature donuts — one donut per model listed in config.model_donuts
+    const modelDonutsContainer = document.getElementById('model-donuts-grid');
+    if (modelDonutsContainer && modelDonuts.length > 0) {
+        // Aggregate loc_by_model_feature across all filtered users
+        const locByModelFeature = {}; // { [model]: { [feature]: value } }
+        for (const u of filteredUsers) {
+            if (!u.loc_by_model_feature) continue;
+            for (const [model, features] of Object.entries(u.loc_by_model_feature)) {
+                if (!locByModelFeature[model]) locByModelFeature[model] = {};
+                for (const [feature, value] of Object.entries(features)) {
+                    locByModelFeature[model][feature] = (locByModelFeature[model][feature] || 0) + value;
+                }
+            }
+        }
+        modelDonutsContainer.innerHTML = modelDonuts.map(model =>
+            `<div id="donut-model-feat-${CSS.escape(model)}"></div>`
+        ).join('');
+        for (const model of modelDonuts) {
+            const el = document.getElementById('donut-model-feat-' + CSS.escape(model));
+            if (el) el.innerHTML = buildDonutChart(locByModelFeature[model] || {}, model);
+        }
+    } else if (modelDonutsContainer) {
+        modelDonutsContainer.innerHTML = '';
+    }
 }
 

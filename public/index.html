@@ -77,6 +77,14 @@
                             style="padding:0.5rem 1rem;border-radius:8px;background:rgba(30,41,59,0.8);color:white;border:1px solid rgba(255,255,255,0.2);cursor:pointer;font-size:0.95rem;outline:none">
                             <option value="">All teams</option>
                         </select>
+                        <select id="phase-filter"
+                            style="padding:0.5rem 1rem;border-radius:8px;background:rgba(30,41,59,0.8);color:white;border:1px solid rgba(255,255,255,0.2);cursor:pointer;font-size:0.95rem;outline:none" title="Filter by AI Adoption Phase">
+                            <option value="">All phases</option>
+                            <option value="0">0: No cohort</option>
+                            <option value="1">1: Code first</option>
+                            <option value="2">2: Agent first</option>
+                            <option value="3">3: Multi-agent</option>
+                        </select>
                         <select id="month-filter"
                             style="padding:0.5rem 1rem;border-radius:8px;background:rgba(30,41,59,0.8);color:white;border:1px solid rgba(255,255,255,0.2);cursor:pointer;font-size:0.95rem;outline:none">
                             <option value="">All times</option>
@@ -98,7 +106,7 @@
                                     <th>Language</th>
                                     <th>Model</th>
                                     <th>IDE</th>
-                                    <th>Days</th>
+                                    <th title="🤖 Agent days: used Copilot Agent mode&#10;💬 Chat days: used Copilot Chat&#10;⌨️ CLI days: used Copilot CLI&#10;🔍 Code Review days: Copilot reviewed code (active = requested by user, passive = auto-triggered)&#10;☁️ Cloud Agent days: Copilot cloud agent was invoked">Days</th>
                                     <th>Activity</th>
                                 </tr>
                             </thead>
@@ -127,6 +135,10 @@
                         <div id="donut-feature"></div>
                         <div id="donut-syntax"></div>
                     </div>
+                    <div class="donut-grid" style="margin-top:1.25rem">
+                        <div id="donut-phase"></div>
+                    </div>
+                    <div class="donut-grid" id="model-donuts-grid" style="margin-top:1.25rem"></div>
                 </div>
             </section>
         </main>

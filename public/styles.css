@@ -465,6 +465,16 @@ body {
     filter: grayscale(40%);
 }
 
+.revoked-user.never-active-user {
+    opacity: 0.35;
+    filter: grayscale(80%) brightness(0.6);
+}
+
+.revoked-user.never-active-user:hover {
+    opacity: 0.5;
+    filter: grayscale(60%) brightness(0.7);
+}
+
 /* Loading state */
 .loading {
     text-align: center;

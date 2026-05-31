@@ -83,10 +83,32 @@ let cachedParsedData = null;
 // Process data on the fly
 // dayLimit: if set, only include days of the month whose day-of-month number is <= dayLimit
 async function getAggregatedData(monthFilter = null, dayLimit = null) {
-    let userMapping = {};
+    // userMapping: array of user objects with { accounts: [...], name, revoked, team, role }
+    let userMapping = [];
+    // loginToUser: map from any account login → user object
+    const loginToUser = {};
+    // loginToCanonicalKey: map from any account login → canonical key (first account in the list)
+    const loginToCanonicalKey = {};
     try {
         if (fs.existsSync(USERS_FILE)) {
-            userMapping = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
+            const raw = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
+            if (Array.isArray(raw)) {
+                userMapping = raw;
+            } else {
+                // Legacy object format fallback: convert to array
+                userMapping = Object.entries(raw).map(([login, u]) => ({
+                    accounts: [login],
+                    ...u
+                }));
+            }
+            for (const user of userMapping) {
+                if (!Array.isArray(user.accounts) || user.accounts.length === 0) continue;
+                const canonicalKey = user.accounts[0];
+                for (const login of user.accounts) {
+                    loginToUser[login] = user;
+                    loginToCanonicalKey[login] = canonicalKey;
+                }
+            }
         }
     } catch (e) {
         console.error('Failed to read users.json:', e);
@@ -175,7 +197,9 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                 }
             }
 
-            const user = entry.user_login || 'unknown';
+            const rawLogin = entry.user_login || 'unknown';
+            // Map login to canonical key (first account); unknown logins keep their login as key
+            const user = loginToCanonicalKey[rawLogin] || rawLogin;
             const organizationId = entry.organization_id != null ? String(entry.organization_id) : null;
             const enterpriseId = entry.enterprise_id != null ? String(entry.enterprise_id) : null;
 
@@ -186,7 +210,7 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                     ? enterpriseFilterKnownUsersMap[enterpriseId]
                     : false);
 
-            if (shouldFilterKnownUsers && !Object.prototype.hasOwnProperty.call(userMapping, user)) {
+            if (shouldFilterKnownUsers && !Object.prototype.hasOwnProperty.call(loginToUser, rawLogin)) {
                 continue;
             }
 
@@ -207,6 +231,9 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                     agent_days: new Set(),
                     chat_days: new Set(),
                     cli_days: new Set(),
+                    code_review_days: new Set(),
+                    cloud_agent_days: new Set(),
+                    ai_adoption_phase_number: null,
                     last_active_day: '',
                     last_ide_name: null,
                     last_plugin: null,
@@ -221,10 +248,15 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                     organization_ids: new Set(),
                     code_loc_from_models: 0,
                     daily: {},
+                    accountDaily: {},  // { [login]: { [day]: { user_initiated, code_generation, cli_turns, code_loc, doc_loc } } }
+                    accountIdes: {},   // { [login]: { ides: {name:loc}, ideVersions: {name:{...}} } }
+                    accountCli: {},    // { [login]: { cli_version, last_seen_day } }
                     allLocByModel: {},
                     allLocByLanguage: {},
+                    modelFeatures: {},  // { [model]: { [feature]: value } }
                     ideVersions: {},  // { [ide_name]: { last_seen_day, ide_version, plugin, plugin_version } }
                     cli_version_info: null,  // { last_seen_day, cli_version }
+                    cli_output_tokens_sum: 0,
                 };
             }
 
@@ -235,10 +267,15 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             stats.code_generation_activity_count += (entry.code_generation_activity_count || 0);
             stats.code_acceptance_activity_count += (entry.code_acceptance_activity_count || 0);
             stats.cli_prompt_count += (entry.totals_by_cli?.prompt_count || 0);
+            stats.cli_output_tokens_sum += (entry.totals_by_cli?.token_usage?.output_tokens_sum || 0);
             if (entry.day && entry.totals_by_cli?.last_known_cli_version?.cli_version) {
                 const cv = entry.totals_by_cli.last_known_cli_version.cli_version;
                 if (!stats.cli_version_info || entry.day >= stats.cli_version_info.last_seen_day) {
                     stats.cli_version_info = { last_seen_day: entry.day, cli_version: cv };
+                }
+                // Per-account CLI version tracking
+                if (!stats.accountCli[rawLogin] || entry.day >= stats.accountCli[rawLogin].last_seen_day) {
+                    stats.accountCli[rawLogin] = { last_seen_day: entry.day, cli_version: cv };
                 }
             }
 
@@ -249,6 +286,27 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                 stats.daily[entry.day].user_initiated += (entry.user_initiated_interaction_count || 0);
                 stats.daily[entry.day].code_generation += (entry.code_generation_activity_count || 0);
                 stats.daily[entry.day].cli_turns += (entry.totals_by_cli?.prompt_count || 0);
+
+                // Per-account daily tracking (rawLogin is the actual account login)
+                if (rawLogin !== user) {
+                    // This entry came from a secondary account — track separately
+                    if (!stats.accountDaily[rawLogin]) stats.accountDaily[rawLogin] = {};
+                    if (!stats.accountDaily[rawLogin][entry.day]) {
+                        stats.accountDaily[rawLogin][entry.day] = { user_initiated: 0, code_generation: 0, code_loc: 0, doc_loc: 0, cli_turns: 0 };
+                    }
+                    stats.accountDaily[rawLogin][entry.day].user_initiated += (entry.user_initiated_interaction_count || 0);
+                    stats.accountDaily[rawLogin][entry.day].code_generation += (entry.code_generation_activity_count || 0);
+                    stats.accountDaily[rawLogin][entry.day].cli_turns += (entry.totals_by_cli?.prompt_count || 0);
+                } else {
+                    // Entry came from the canonical account — track under its login
+                    if (!stats.accountDaily[rawLogin]) stats.accountDaily[rawLogin] = {};
+                    if (!stats.accountDaily[rawLogin][entry.day]) {
+                        stats.accountDaily[rawLogin][entry.day] = { user_initiated: 0, code_generation: 0, code_loc: 0, doc_loc: 0, cli_turns: 0 };
+                    }
+                    stats.accountDaily[rawLogin][entry.day].user_initiated += (entry.user_initiated_interaction_count || 0);
+                    stats.accountDaily[rawLogin][entry.day].code_generation += (entry.code_generation_activity_count || 0);
+                    stats.accountDaily[rawLogin][entry.day].cli_turns += (entry.totals_by_cli?.prompt_count || 0);
+                }
             }
 
             stats.loc_added_sum += (entry.loc_added_sum || 0);
@@ -274,6 +332,10 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                     stats.daily[entry.day].doc_loc += entryDocLoc;
                     stats.daily[entry.day].code_loc += entryTotalLoc - entryDocLoc;
                 }
+                if (entry.day && stats.accountDaily[rawLogin] && stats.accountDaily[rawLogin][entry.day]) {
+                    stats.accountDaily[rawLogin][entry.day].doc_loc += entryDocLoc;
+                    stats.accountDaily[rawLogin][entry.day].code_loc += entryTotalLoc - entryDocLoc;
+                }
             }
 
             if (entry.day) {
@@ -295,6 +357,20 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                 if (entry.used_agent || entry.used_copilot_coding_agent) stats.agent_days.add(entry.day);
                 if (entry.used_chat) stats.chat_days.add(entry.day);
                 if (entry.used_cli) stats.cli_days.add(entry.day);
+                if (entry.used_copilot_code_review_active || entry.used_copilot_code_review_passive) {
+                    stats.code_review_days.add(entry.day);
+                    stats.features['code_review'] = (stats.features['code_review'] || 0) + 1;
+                }
+                if (entry.used_copilot_cloud_agent) {
+                    stats.cloud_agent_days.add(entry.day);
+                    stats.features['cloud_agent'] = (stats.features['cloud_agent'] || 0) + 1;
+                }
+                if (entry.ai_adoption_phase != null && entry.ai_adoption_phase.phase_number != null) {
+                    const pn = entry.ai_adoption_phase.phase_number;
+                    if (stats.ai_adoption_phase_number === null || pn > stats.ai_adoption_phase_number) {
+                        stats.ai_adoption_phase_number = pn;
+                    }
+                }
             }
 
             if (Array.isArray(entry.totals_by_language_model)) {
@@ -365,6 +441,20 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                                 plugin_version: ti.last_known_plugin_version?.plugin_version || null
                             };
                         }
+                        // Per-account IDE tracking
+                        if (!stats.accountIdes[rawLogin]) stats.accountIdes[rawLogin] = { ides: {}, ideVersions: {} };
+                        const acctIde = stats.accountIdes[rawLogin];
+                        if (totalActivity > 0) {
+                            acctIde.ides[ti.ide] = (acctIde.ides[ti.ide] || 0) + totalActivity;
+                        }
+                        if (entry.day && (!acctIde.ideVersions[ti.ide] || entry.day >= acctIde.ideVersions[ti.ide].last_seen_day)) {
+                            acctIde.ideVersions[ti.ide] = {
+                                last_seen_day: entry.day,
+                                ide_version: ti.last_known_ide_version?.ide_version || null,
+                                plugin: ti.last_known_plugin_version?.plugin || null,
+                                plugin_version: ti.last_known_plugin_version?.plugin_version || null
+                            };
+                        }
                     }
                 }
             }
@@ -384,6 +474,22 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                                    + (tf.code_acceptance_activity_count || 0);
                     if (fValue > 0) {
                         stats.features[tf.feature] = (stats.features[tf.feature] || 0) + fValue;
+                    }
+                }
+            }
+
+            if (Array.isArray(entry.totals_by_model_feature)) {
+                for (const mf of entry.totals_by_model_feature) {
+                    if (!mf.model || !mf.feature) continue;
+                    const fLoc = (mf.loc_suggested_to_add_sum || 0) + (mf.loc_suggested_to_delete_sum || 0)
+                               + (mf.loc_added_sum || 0) + (mf.loc_deleted_sum || 0);
+                    const fValue = fLoc > 0 ? fLoc
+                                 : (mf.user_initiated_interaction_count || 0)
+                                   + (mf.code_generation_activity_count || 0)
+                                   + (mf.code_acceptance_activity_count || 0);
+                    if (fValue > 0) {
+                        if (!stats.modelFeatures[mf.model]) stats.modelFeatures[mf.model] = {};
+                        stats.modelFeatures[mf.model][mf.feature] = (stats.modelFeatures[mf.model][mf.feature] || 0) + fValue;
                     }
                 }
             }
@@ -452,12 +558,13 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
         const totalLangActivity = Object.values(user.languages).reduce((sum, loc) => sum + loc, 0);
         const favLanguagePct = totalLangActivity > 0 ? Math.round((favLanguageLoc / totalLangActivity) * 100) + '%' : '0%';
 
-        // Map human name and revoked
-        const mapping = userMapping[user.user_login] || {};
+        // Map human name and revoked — look up by canonical key (user.user_login)
+        const mapping = loginToUser[user.user_login] || {};
         const humanName = mapping.name || user.user_login;
         const isRevoked = mapping.revoked === true;
         const userTeam = mapping.team || '';
         const userRole = mapping.role || '';
+        const userAccounts = Array.isArray(mapping.accounts) ? mapping.accounts : [user.user_login];
 
         const enterpriseIds = [...user.enterprise_ids];
         const organizationIds = [...user.organization_ids];
@@ -488,6 +595,10 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             agent_days_count: user.agent_days.size,
             chat_days_count: user.chat_days.size,
             cli_days_count: user.cli_days.size,
+            code_review_days_count: user.code_review_days.size,
+            cloud_agent_days_count: user.cloud_agent_days.size,
+            cli_output_tokens_sum: user.cli_output_tokens_sum,
+            ai_adoption_phase_number: user.ai_adoption_phase_number,
             turns: user.user_initiated_interaction_count + user.code_generation_activity_count + user.cli_prompt_count,
             acceptance_rate: Math.round(generationRatio * 100) + '%',
             avg_loc_added_daily: user.active_days.size > 0 ? Math.round(codeLocAdded / user.active_days.size) : 0,
@@ -495,10 +606,13 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             favorite_model: favModel !== 'None' ? `${favModel}<br><span style="font-size:0.8em;color:var(--text-muted)">${favModelPct}</span>` : '-',
             favorite_ide: favIde !== 'None' ? `${favIde}<br><span style="font-size:0.8em;color:var(--text-muted)">${favIdePct}</span>` : '-',
             favorite_language: favLanguage !== 'None' ? `${favLanguage}<br><span style="font-size:0.8em;color:var(--text-muted)">${favLanguagePct}</span>` : '-',
+            active_days_list: [...user.active_days].sort(),
             active_days: undefined,
             agent_days: undefined,
             chat_days: undefined,
             cli_days: undefined,
+            code_review_days: undefined,
+            cloud_agent_days: undefined,
             all_languages_list: Object.keys(user.languages).sort(),
             all_models_list: Object.keys(user.models).sort(),
             all_ides_list: Object.keys(user.ides).sort(),
@@ -514,6 +628,15 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             daily: Object.entries(user.daily)
                 .sort(([a], [b]) => a.localeCompare(b))
                 .map(([day, d]) => ({ day, user_initiated: d.user_initiated, code_generation: d.code_generation, cli_turns: d.cli_turns, code_loc: d.code_loc, doc_loc: d.doc_loc })),
+            accounts: userAccounts,
+            account_daily: Object.fromEntries(
+                Object.entries(user.accountDaily).map(([login, dayMap]) => [
+                    login,
+                    Object.entries(dayMap)
+                        .sort(([a], [b]) => a.localeCompare(b))
+                        .map(([day, d]) => ({ day, user_initiated: d.user_initiated, code_generation: d.code_generation, cli_turns: d.cli_turns, code_loc: d.code_loc || 0, doc_loc: d.doc_loc || 0 }))
+                ])
+            ),
             loc_by_model: user.allLocByModel,
             loc_by_language: user.allLocByLanguage,
             loc_by_code_language: Object.fromEntries(
@@ -523,6 +646,7 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                 Object.entries(user.allLocByLanguage).filter(([l]) => documentingLanguages.includes(l.toLowerCase()))
             ),
             loc_by_feature: user.features,
+            loc_by_model_feature: user.modelFeatures,
             loc_by_ide: user.ides,
             models: undefined,
             ides: undefined,
@@ -531,25 +655,48 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             doc_languages: undefined,
             allLocByModel: undefined,
             allLocByLanguage: undefined,
+            modelFeatures: undefined,
             ideVersions: undefined,
-            cli_version_info: undefined
+            cli_version_info: undefined,
+            accountDaily: undefined,
+            account_ides: Object.fromEntries(
+                Object.entries(user.accountIdes).map(([login, a]) => [login, {
+                    ides: Object.keys(a.ides).sort(),
+                    ide_versions: Object.fromEntries(
+                        Object.entries(a.ideVersions).map(([ide, v]) => [ide, {
+                            ide_version: v.ide_version,
+                            plugin: v.plugin,
+                            plugin_version: v.plugin_version
+                        }])
+                    )
+                }])
+            ),
+            accountIdes: undefined,
+            account_cli: Object.fromEntries(
+                Object.entries(user.accountCli).map(([login, c]) => [login, c.cli_version])
+            ),
+            accountCli: undefined
         };
     });
 
     const allUsers = [...results].sort((a, b) => b.code_loc_changed - a.code_loc_changed);
 
     // Append users from users.json who have no telemetry at all (never used Copilot)
+    // With array format: check if canonical key (first account) is in activeLogins
     const activeLogins = new Set(results.map(u => u.user_login));
-    for (const [login, mapping] of Object.entries(userMapping)) {
-        if (activeLogins.has(login)) continue;
-        // Skip if revoked — they never used it and aren't active anyway
-        // (keep revoked-never-active if you want, but it adds noise; change condition to include them)
+    for (const mapping of userMapping) {
+        if (!Array.isArray(mapping.accounts) || mapping.accounts.length === 0) continue;
+        const canonicalKey = mapping.accounts[0];
+        if (activeLogins.has(canonicalKey)) continue;
+        // Skip if any account for this user is active
+        if (mapping.accounts.some(a => activeLogins.has(a))) continue;
         allUsers.push({
-            user_login: login,
-            human_name: mapping.name || login,
+            user_login: canonicalKey,
+            human_name: mapping.name || canonicalKey,
             revoked: mapping.revoked === true,
             team: mapping.team || '',
             role: mapping.role || '',
+            accounts: mapping.accounts,
             enterprise_ids: [],
             organization_ids: [],
             enterprise_label: '',
@@ -559,7 +706,7 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             total_suggested_changed: 0,
             doc_loc_changed: 0, doc_loc_added: 0, doc_loc_deleted: 0,
             code_loc_changed: 0, code_loc_added: 0, code_loc_deleted: 0,
-            active_days_count: 0, agent_days_count: 0, chat_days_count: 0, cli_days_count: 0,
+            active_days_count: 0, agent_days_count: 0, chat_days_count: 0, cli_days_count: 0, code_review_days_count: 0, cloud_agent_days_count: 0, cli_output_tokens_sum: 0, ai_adoption_phase_number: null,
             turns: 0, acceptance_rate: '0%',
             avg_loc_added_daily: 0, perf_score: 0,
             favorite_model: '-', favorite_ide: '-', favorite_language: '-',
@@ -567,6 +714,7 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             all_languages_list: [], all_models_list: [], all_ides_list: [],
             ide_versions: {}, cli_version: null,
             all_doc_languages_list: [], daily: [],
+            account_daily: {},
             loc_by_model: {}, loc_by_language: {}, loc_by_code_language: {},
             loc_by_doc_language: {}, loc_by_feature: {}, loc_by_ide: {},
         });
@@ -580,8 +728,8 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
         Object.values(userStats).flatMap(u => Object.keys(u.languages))
     )].sort();
 
-    // Collect available teams from user mapping
-    const availableTeams = [...new Set(Object.values(userMapping).map(u => u.team).filter(Boolean))].sort();
+    // Collect available teams from user mapping (array format)
+    const availableTeams = [...new Set(userMapping.map(u => u.team).filter(Boolean))].sort();
 
     // Collect enterprises and organizations seen in actual data, with nested hierarchy
     const seenEnterpriseIds = [...new Set(results.flatMap(u => u.enterprise_ids))].sort();
@@ -602,7 +750,8 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
         availableMonths: orderedMonths,
         availableTeams,
         availableEnterprises,
-        allLanguages
+        allLanguages,
+        modelDonuts: Array.isArray(config.model_donuts) ? config.model_donuts : []
     };
 }
 
@@ -665,14 +814,17 @@ const server = http.createServer(async (req, res) => {
                             doc_loc_changed: u.doc_loc_changed,
                             config_loc_changed: u.config_loc_changed,
                             turns: u.turns,
-                            active_days_count: u.active_days_count
+                            active_days_count: u.active_days_count,
+                            ai_adoption_phase_number: u.ai_adoption_phase_number ?? null
                         };
                     }
                     data.prevMonthStats = prevMap;
 
                     // Compute avg DAU % for previous month while we have per-user daily data
+                    // Only count active (non-revoked) users
                     const prevDayCountMap = {};
                     for (const u of prevData.users) {
+                        if (u.revoked) continue;
                         if (Array.isArray(u.daily)) {
                             for (const d of u.daily) {
                                 prevDayCountMap[d.day] = (prevDayCountMap[d.day] || 0) + 1;
@@ -684,10 +836,11 @@ const server = http.createServer(async (req, res) => {
                         return dow !== 0 && dow !== 6;
                     });
                     let prevAvgDauPct = null;
-                    if (prevBizActiveDays.length > 0 && prevData.totalUsers > 0) {
+                    const prevActiveUsers = prevData.users.filter(u => !u.revoked);
+                    if (prevBizActiveDays.length > 0 && prevActiveUsers.length > 0) {
                         const prevDauSum = prevBizActiveDays.reduce((s, [, n]) => s + n, 0);
                         const prevAvgDAU = prevDauSum / prevBizActiveDays.length;
-                        prevAvgDauPct = Math.round(prevAvgDAU / prevData.totalUsers * 100);
+                        prevAvgDauPct = Math.round(prevAvgDAU / prevActiveUsers.length * 100);
                     }
 
                     data.prevMonthTotals = {
@@ -708,6 +861,18 @@ const server = http.createServer(async (req, res) => {
         }
     } else {
         serveStaticFile(req, res);
+    }
+});
+
+server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+        console.error(`\n❌  Port ${PORT} is already in use.`);
+        console.error(`   Stop the existing server first:\n`);
+        console.error(`     npm run stop      # kills whatever holds port ${PORT}`);
+        console.error(`     npm run restart   # stop + start in one command\n`);
+        process.exit(1);
+    } else {
+        throw err;
     }
 });
 
