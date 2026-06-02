@@ -748,3 +748,129 @@ body {
     color: var(--text-main);
     margin-right: 0.4rem;
 }
+
+/* ── AI Maturity section ─────────────────────────────────────────────────── */
+.maturity-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    padding-bottom: 0.25rem;
+}
+
+.maturity-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.55rem 0.85rem;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    background: rgba(255, 255, 255, 0.025);
+    cursor: default;
+    transition: background 0.15s ease, border-color 0.15s ease;
+    user-select: none;
+}
+
+.maturity-row:hover {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.12);
+}
+
+.maturity-icon {
+    font-size: 1.1rem;
+    flex-shrink: 0;
+    line-height: 1;
+}
+
+/* Compact left cluster: name + (value) */
+.maturity-label {
+    display: flex;
+    align-items: baseline;
+    gap: 0.4rem;
+    flex-shrink: 0;
+}
+
+.maturity-name {
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--text-main);
+    white-space: nowrap;
+}
+
+.maturity-value {
+    font-size: 0.82rem;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.maturity-val-green { color: #4ade80; }
+.maturity-val-amber { color: #fbbf24; }
+.maturity-val-red   { color: #f87171; }
+
+/* Recommendation text — fills remaining width */
+.maturity-rec {
+    flex: 1;
+    font-size: 0.8rem;
+    line-height: 1.4;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.maturity-rec-green { color: var(--text-muted); opacity: 0.6; }
+.maturity-rec-amber { color: var(--text-main); }
+.maturity-rec-red   { color: var(--text-main); }
+.maturity-rec-gray  { color: var(--text-muted); opacity: 0.4; }
+
+/* Links inside recommendation text */
+.maturity-rec a {
+    color: inherit;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    opacity: 0.85;
+}
+.maturity-rec a:hover { opacity: 1; }
+
+.maturity-info-icon {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    opacity: 0.35;
+    flex-shrink: 0;
+    cursor: help;
+    transition: opacity 0.15s ease;
+}
+
+.maturity-row:hover .maturity-info-icon {
+    opacity: 1;
+}
+
+/* Fixed-position hover tooltip (appended to <body> to avoid overflow clipping) */
+.maturity-tooltip {
+    position: fixed;
+    z-index: 9999;
+    max-width: 400px;
+    min-width: 260px;
+    background: rgba(15, 23, 42, 0.98);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 10px;
+    padding: 0.85rem 1rem;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+    pointer-events: none;
+    font-family: 'Inter', sans-serif;
+}
+
+.maturity-tt-explain {
+    font-size: 0.78rem;
+    color: #94a3b8;
+    line-height: 1.6;
+}
+
+.maturity-tt-rec {
+    margin-top: 0.55rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    font-size: 0.78rem;
+    line-height: 1.6;
+}
+
+.maturity-tt-ok     { color: #4ade80; }
+.maturity-tt-action { color: #fbbf24; }

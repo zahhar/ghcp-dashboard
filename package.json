@@ -10,6 +10,7 @@
     "restart": "npm run stop && npm run start",
     "update": "node scripts/update-data.js",
     "ingest": "node scripts/ingest-data.js",
+    "deploy": "GITLAB_REPO_URL='git@git.epam.com:zahhar_kirillov/scor-ghcp-dashboard.git' ./scripts/publish-to-gitlab.sh",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

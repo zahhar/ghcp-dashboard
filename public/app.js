@@ -9,7 +9,8 @@ let currentStatusFilter = 'active';
 let currentPhaseFilter = '';
 let prevMonthStats = null;
 let prevMonthTotals = null;
-let modelDonuts = []; // model names from config.model_donuts
+let watchModelUse = []; // model names from config.watch_model_use
+let globalPreferredEnterpriseIds = []; // enterprise IDs with preferred_license: true in config.json
 
 const PHASE_LABELS = {
     0: '0: No cohort',
@@ -58,6 +59,183 @@ const TABLE_ANIM_DELAY_MAX = 0.5;
 // Fuzzy search: accepted match window = query length × this multiplier (controls how spread-out matched chars can be)
 const FUZZY_MATCH_SPREAD = 2;
 
+const DEFAULT_STATUS_FILTER = 'active';
+const DEFAULT_SORT_COLUMN = 'total_output';
+const DEFAULT_SORT_DESC = true;
+const SORT_MAPPING = {
+    0: null, // # is not sortable
+    1: 'human_name',
+    2: 'total_output',
+    3: 'turns',
+    4: 'doc_loc_changed',
+    5: 'code_loc_changed',
+    6: 'perf_score',
+    7: 'favorite_language',
+    8: 'favorite_model',
+    9: 'favorite_ide',
+    10: 'active_days_count',
+    11: 'last_active_day'
+};
+const SORTABLE_COLUMNS = new Set(Object.values(SORT_MAPPING).filter(Boolean));
+
+function isMonthToken(value) {
+    return /^\d{4}-\d{2}$/.test(value || '');
+}
+
+function hasOption(selectEl, value) {
+    return Array.from(selectEl.options).some(opt => opt.value === value);
+}
+
+function sanitizeStateFromUrl(state) {
+    const normalized = { ...state };
+
+    normalized.month = isMonthToken(normalized.month) ? normalized.month : '';
+    normalized.team = normalized.team || '';
+    normalized.scope = normalized.scope || '';
+    normalized.search = (normalized.search || '').trim();
+    normalized.status = (normalized.status === 'active' || normalized.status === 'revoked') ? normalized.status : '';
+
+    if (normalized.phase !== '') {
+        const phaseNum = parseInt(normalized.phase, 10);
+        normalized.phase = [0, 1, 2, 3].includes(phaseNum) ? String(phaseNum) : '';
+    }
+
+    if (!SORTABLE_COLUMNS.has(normalized.sort)) {
+        normalized.sort = DEFAULT_SORT_COLUMN;
+        normalized.desc = DEFAULT_SORT_DESC;
+    } else {
+        normalized.desc = !!normalized.desc;
+    }
+
+    return normalized;
+}
+
+function parseStateFromUrl() {
+    const url = new URL(window.location.href);
+    const segments = url.pathname
+        .split('/')
+        .filter(Boolean)
+        .map(s => decodeURIComponent(s));
+
+    let team = '';
+    let month = '';
+
+    if (segments.length === 1) {
+        if (isMonthToken(segments[0])) month = segments[0];
+        else if (segments[0].toLowerCase() !== 'all') team = segments[0];
+    } else if (segments.length >= 2) {
+        const first = segments[0];
+        const second = segments[1];
+        if (isMonthToken(first)) {
+            month = first;
+            if (second && second.toLowerCase() !== 'all') team = second;
+        } else {
+            if (first && first.toLowerCase() !== 'all') team = first;
+            if (isMonthToken(second)) month = second;
+        }
+    }
+
+    const rawDesc = url.searchParams.get('desc');
+    const desc = rawDesc == null
+        ? DEFAULT_SORT_DESC
+        : ['1', 'true', 'yes'].includes(rawDesc.toLowerCase());
+
+    return sanitizeStateFromUrl({
+        team,
+        month,
+        scope: url.searchParams.get('scope') || '',
+        search: url.searchParams.get('q') || '',
+        status: url.searchParams.get('status') || DEFAULT_STATUS_FILTER,
+        phase: url.searchParams.get('phase') || '',
+        sort: url.searchParams.get('sort') || DEFAULT_SORT_COLUMN,
+        desc
+    });
+}
+
+function applyStateToGlobals(state) {
+    currentTeamFilter = state.team;
+    currentMonthFilter = state.month;
+    currentScopeFilter = state.scope;
+    currentSearchQuery = state.search;
+    currentStatusFilter = state.status || DEFAULT_STATUS_FILTER;
+    currentPhaseFilter = state.phase;
+    currentSortColumn = state.sort;
+    currentSortDesc = state.desc;
+}
+
+function syncControlsFromState() {
+    const searchEl = document.getElementById('user-search');
+    if (searchEl) searchEl.value = currentSearchQuery;
+
+    const statusEl = document.getElementById('status-filter');
+    if (statusEl) statusEl.value = currentStatusFilter;
+
+    const phaseEl = document.getElementById('phase-filter');
+    if (phaseEl) phaseEl.value = currentPhaseFilter;
+}
+
+function normalizeDynamicFilterSelections() {
+    let normalized = false;
+
+    const teamEl = document.getElementById('team-filter');
+    if (teamEl) {
+        if (currentTeamFilter && hasOption(teamEl, currentTeamFilter)) {
+            teamEl.value = currentTeamFilter;
+        } else if (currentTeamFilter) {
+            currentTeamFilter = '';
+            teamEl.value = '';
+            normalized = true;
+        }
+    }
+
+    const monthEl = document.getElementById('month-filter');
+    if (monthEl) {
+        if (currentMonthFilter && hasOption(monthEl, currentMonthFilter)) {
+            monthEl.value = currentMonthFilter;
+        } else if (currentMonthFilter) {
+            currentMonthFilter = '';
+            monthEl.value = '';
+            normalized = true;
+        }
+    }
+
+    const scopeEl = document.getElementById('scope-filter');
+    if (scopeEl) {
+        if (currentScopeFilter && hasOption(scopeEl, currentScopeFilter)) {
+            scopeEl.value = currentScopeFilter;
+        } else if (currentScopeFilter) {
+            currentScopeFilter = '';
+            scopeEl.value = '';
+            normalized = true;
+        }
+    }
+
+    return normalized;
+}
+
+function updateUrlFromCurrentState() {
+    const pathSegments = [];
+    if (currentTeamFilter) pathSegments.push(encodeURIComponent(currentTeamFilter));
+    else if (currentMonthFilter) pathSegments.push('all');
+    if (currentMonthFilter) pathSegments.push(encodeURIComponent(currentMonthFilter));
+
+    const params = new URLSearchParams();
+    if (currentScopeFilter) params.set('scope', currentScopeFilter);
+    if (currentSearchQuery) params.set('q', currentSearchQuery);
+    if (currentStatusFilter !== DEFAULT_STATUS_FILTER) params.set('status', currentStatusFilter);
+    if (currentPhaseFilter !== '') params.set('phase', currentPhaseFilter);
+    if (currentSortColumn !== DEFAULT_SORT_COLUMN) params.set('sort', currentSortColumn);
+    if (currentSortDesc !== DEFAULT_SORT_DESC) params.set('desc', currentSortDesc ? '1' : '0');
+
+    const nextPath = pathSegments.length ? `/${pathSegments.join('/')}` : '/';
+    const query = params.toString();
+    const nextUrl = query ? `${nextPath}?${query}` : nextPath;
+    const currentUrl = `${window.location.pathname}${window.location.search}`;
+    if (nextUrl !== currentUrl) {
+        history.replaceState(null, '', nextUrl);
+    }
+}
+
 function formatNumber(num) {
     if (num === null || num === undefined) return '0';
     return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, "'");
@@ -84,38 +262,62 @@ function signedLoc(n, sign) {
 let currentMonthFilter = '';
 
 document.addEventListener('DOMContentLoaded', () => {
-    fetchDashboardData();
+    applyStateToGlobals(parseStateFromUrl());
+    syncControlsFromState();
+
+    fetchDashboardData(currentMonthFilter);
     setupTableSorting();
 
     document.getElementById('month-filter').addEventListener('change', (e) => {
         currentMonthFilter = e.target.value;
+        updateUrlFromCurrentState();
         fetchDashboardData(currentMonthFilter);
     });
 
     document.getElementById('team-filter').addEventListener('change', (e) => {
         currentTeamFilter = e.target.value;
+        updateUrlFromCurrentState();
         renderUsersTable();
         renderDAUChart();
     });
 
     document.getElementById('scope-filter').addEventListener('change', (e) => {
         currentScopeFilter = e.target.value;
+        updateUrlFromCurrentState();
         renderUsersTable();
     });
 
     document.getElementById('status-filter').addEventListener('change', (e) => {
         currentStatusFilter = e.target.value;
+        updateUrlFromCurrentState();
         renderUsersTable();
     });
 
     document.getElementById('phase-filter').addEventListener('change', (e) => {
         currentPhaseFilter = e.target.value;
+        updateUrlFromCurrentState();
         renderUsersTable();
     });
 
     document.getElementById('user-search').addEventListener('input', (e) => {
         currentSearchQuery = e.target.value.trim();
+        updateUrlFromCurrentState();
         renderUsersTable();
+    });
+
+    window.addEventListener('popstate', () => {
+        const nextState = parseStateFromUrl();
+        const monthChanged = nextState.month !== currentMonthFilter;
+        applyStateToGlobals(nextState);
+        syncControlsFromState();
+
+        if (monthChanged) {
+            fetchDashboardData(currentMonthFilter);
+            return;
+        }
+
+        renderUsersTable();
+        renderDAUChart();
     });
 });
 
@@ -190,11 +392,17 @@ async function fetchDashboardData(month = '') {
             scopeFilterEl.style.display = totalChoices <= 1 ? 'none' : '';
         }
 
+        syncControlsFromState();
+        if (normalizeDynamicFilterSelections()) {
+            updateUrlFromCurrentState();
+        }
+
         globalUsers = data.users || [];
         globalLastDay = globalUsers.reduce((max, u) => (u.last_active_day > max ? u.last_active_day : max), '');
         prevMonthStats = data.prevMonthStats || null;
         prevMonthTotals = data.prevMonthTotals || null;
-        if (Array.isArray(data.modelDonuts)) modelDonuts = data.modelDonuts;
+        if (Array.isArray(data.watchModelUse)) watchModelUse = data.watchModelUse;
+        if (Array.isArray(data.preferredEnterpriseIds)) globalPreferredEnterpriseIds = data.preferredEnterpriseIds;
 
         // Render Tables
         renderUsersTable();
@@ -206,23 +414,53 @@ async function fetchDashboardData(month = '') {
     }
 }
 
-// Compute current streak: consecutive working days active going backwards from the user's own last active day.
+// Compute the longest streak within the selected period:
+// uninterrupted active WORKING days (weekends are excluded from continuity checks).
 // activeDaysList: sorted array of 'YYYY-MM-DD' strings (already filtered to the selected period).
-// lastActiveDay: the user's own last active day used as the anchor.
+// lastActiveDay: kept for backward compatibility with existing call sites; not used.
 function computeCurrentStreak(activeDaysList, lastActiveDay) {
-    if (!activeDaysList || activeDaysList.length === 0 || !lastActiveDay) return 0;
-    const activeSet = new Set(activeDaysList);
-    const d = new Date(lastActiveDay + 'T12:00:00'); // noon avoids DST boundary issues
-    let streak = 0;
-    for (;;) {
-        const dow = d.getDay(); // 0=Sun, 6=Sat
-        if (dow === 0 || dow === 6) { d.setDate(d.getDate() - 1); continue; } // skip weekend
-        const dateStr = localISODate(d);
-        if (!activeSet.has(dateStr)) break;
-        streak++;
-        d.setDate(d.getDate() - 1);
+    if (!activeDaysList || activeDaysList.length === 0) return 0;
+
+    // Consider only unique working days that are active.
+    const workingActiveDays = [...new Set(activeDaysList)]
+        .map(day => new Date(day + 'T12:00:00')) // noon avoids DST boundary issues
+        .filter(d => {
+            const dow = d.getDay();
+            return dow !== 0 && dow !== 6;
+        })
+        .sort((a, b) => a - b);
+
+    if (!workingActiveDays.length) return 0;
+
+    let best = 1;
+    let current = 1;
+
+    for (let i = 1; i < workingActiveDays.length; i++) {
+        const prev = new Date(workingActiveDays[i - 1]);
+        const cur = workingActiveDays[i];
+
+        // Walk from previous calendar day to current day,
+        // counting only working days that must be uninterrupted.
+        prev.setDate(prev.getDate() + 1);
+        let missingWorkingDayBetween = false;
+        while (localISODate(prev) < localISODate(cur)) {
+            const dow = prev.getDay();
+            if (dow !== 0 && dow !== 6) {
+                missingWorkingDayBetween = true;
+                break;
+            }
+            prev.setDate(prev.getDate() + 1);
+        }
+
+        if (missingWorkingDayBetween) {
+            current = 1;
+        } else {
+            current++;
+            if (current > best) best = current;
+        }
     }
-    return streak;
+
+    return best;
 }
 
 // Returns YYYY-MM-DD in LOCAL time (avoids UTC-offset date shift from toISOString)
@@ -261,22 +499,6 @@ function getFriendlyDate(dateString) {
 }
 
 function setupTableSorting() {
-    // Map column index to property names in the user object
-    const sortMapping = {
-        0: null, // # is not sortable
-        1: 'human_name',
-        2: 'total_output',
-        3: 'turns',
-        4: 'doc_loc_changed',
-        5: 'code_loc_changed',
-        6: 'perf_score',
-        7: 'favorite_language',
-        8: 'favorite_model',
-        9: 'favorite_ide',
-        10: 'active_days_count',
-        11: 'last_active_day'
-    };
-
     const headers = document.querySelectorAll('#users-table th');
 
     // Store original text
@@ -288,7 +510,7 @@ function setupTableSorting() {
     function updateHeaders() {
         headers.forEach((th, index) => {
             let text = th.dataset.originalText;
-            if (sortMapping[index] === currentSortColumn) {
+            if (SORT_MAPPING[index] === currentSortColumn) {
                 text += currentSortDesc ? ' ▼' : ' ▲';
             }
             th.innerText = text;
@@ -301,7 +523,7 @@ function setupTableSorting() {
         th.style.cursor = 'pointer';
         th.title = "Click to sort";
         th.addEventListener('click', () => {
-            const prop = sortMapping[index];
+            const prop = SORT_MAPPING[index];
             if (!prop) return;
 
             // Toggle sort direction if clicking same column
@@ -315,6 +537,7 @@ function setupTableSorting() {
 
             updateHeaders();
             renderUsersTable();
+            updateUrlFromCurrentState();
         });
     });
 }
@@ -468,6 +691,7 @@ function renderUsersTable() {
     }
 
     renderDonutSection(sortedUsers);
+    renderMaturitySection(sortedUsers);
 
     sortedUsers.forEach((user, idx) => {
         const lineNumber = idx + 1;
@@ -559,7 +783,7 @@ ${(() => { const pn = user.ai_adoption_phase_number ?? 0; const prevPn = prev ? 
                     ? '<span style="font-size:0.85em;opacity:0.5">— no activity —</span>'
                     : `${getFriendlyDate(user.last_active_day)}
                 <br>
-                <span style="font-size:0.8em;">${user.active_days_count} days total ${prev ? diffAbsBadge(user.active_days_count, prev.active_days_count) : ''}</span>${(() => { const s = computeCurrentStreak(user.active_days_list, user.last_active_day); return s > 0 ? `<br><span style="font-size:0.8em;">🔥&nbsp;${s}d streak</span>` : ''; })()}`}
+                <span style="font-size:0.8em;">${user.active_days_count} days total ${prev ? diffAbsBadge(user.active_days_count, prev.active_days_count) : ''}</span>${(() => { const s = computeCurrentStreak(user.active_days_list, user.last_active_day); return s > 0 ? `<br><span style="font-size:0.8em;">🔥&nbsp;${s}d best streak</span>` : ''; })()}`}
             </td>
         `;
 
@@ -814,7 +1038,34 @@ function initSectionToggle(toggleId, collapsibleId, chevronId) {
 
 // ── Users table + Output Breakdown collapse toggles ─────────────────────
 initSectionToggle('users-toggle',     'users-table-collapsible', 'users-chevron');
+initSectionToggle('maturity-toggle',  'maturity-collapsible',    'maturity-chevron');
 initSectionToggle('breakdown-toggle', 'breakdown-collapsible',   'breakdown-chevron');
+
+// ── Shared aggregate computation ───────────────────────────────────────────
+// Used by both renderDAUChart (header stats) and renderMaturitySection (ctx).
+function computeTeamAggregates(users, month) {
+    const nonRevoked = users.filter(u => !u.revoked);
+    const total = nonRevoked.length;
+
+    let avgDauPct = null, avgDAU = 0, activeBizDays = [];
+    const dauData = computeDAU(nonRevoked, 30, month || '');
+    activeBizDays = dauData.filter(d => !d.isWeekend && d.count > 0);
+    if (activeBizDays.length && total > 0) {
+        const dauSum = activeBizDays.reduce((s, d) => s + d.count, 0);
+        avgDAU = Math.round(dauSum / activeBizDays.length);
+        avgDauPct = Math.round(avgDAU / total * 100);
+    }
+
+    const totalTurns = nonRevoked.reduce((s, u) => s + (u.turns || 0), 0);
+    const avgTurns = total > 0 ? Math.round(totalTurns / total) : 0;
+
+    const activeUsers = nonRevoked.filter(u => (u.active_days_count || 0) > 0);
+    const avgPerf = activeUsers.length > 0
+        ? Math.round(activeUsers.reduce((s, u) => s + (u.perf_score || 0), 0) / activeUsers.length)
+        : 0;
+
+    return { avgDauPct, avgDAU, avgTurns, avgPerf, total, activeBizDays };
+}
 
 function renderDAUChart() {
     const container = document.getElementById('dau-chart-container');
@@ -824,24 +1075,8 @@ function renderDAUChart() {
     container.innerHTML = buildDAUChart(filteredUsers, filteredUsers.length, currentMonthFilter);
     const avgStat = document.getElementById('dau-avg-stat');
     if (avgStat) {
-        const data = computeDAU(filteredUsers, 30, currentMonthFilter);
-        const activeBizDays = data.filter(d => !d.isWeekend && d.count > 0);
+        const { avgDauPct: pct, avgDAU, avgTurns, avgPerf, activeBizDays } = computeTeamAggregates(filteredUsers, currentMonthFilter);
         if (activeBizDays.length) {
-            const total = filteredUsers.length;
-            const dauSum = activeBizDays.reduce((s, d) => s + d.count, 0);
-            const avgDAU = Math.round(dauSum / activeBizDays.length);
-            const pct = total > 0 ? Math.round(avgDAU / total * 100) : 0;
-
-            // avg turns per user = total turns ÷ total users in period
-            const totalTurns = filteredUsers.reduce((s, u) => s + (u.turns || 0), 0);
-            const avgTurns = total > 0 ? Math.round(totalTurns / total) : 0;
-
-            // avg perf = sum of individual perf_scores ÷ number of users who have any active days
-            const activeUsers = filteredUsers.filter(u => (u.active_days_count || 0) > 0);
-            const avgPerf = activeUsers.length > 0
-                ? Math.round(activeUsers.reduce((s, u) => s + (u.perf_score || 0), 0) / activeUsers.length)
-                : 0;
-
             // prev-month equivalents (only available when a month is selected)
             let prevAvgTurns = null, prevAvgPerf = null, prevPct = null;
             if (prevMonthStats) {
@@ -1155,9 +1390,9 @@ function renderDonutSection(filteredUsers) {
     }
     document.getElementById('donut-phase').innerHTML = buildDonutChart(usersByPhase, 'by AI Adoption Phase');
 
-    // Per-model feature donuts — one donut per model listed in config.model_donuts
-    const modelDonutsContainer = document.getElementById('model-donuts-grid');
-    if (modelDonutsContainer && modelDonuts.length > 0) {
+    // Per-model feature donuts — one donut per model listed in config.watch_model_use
+    const watchModelsContainer = document.getElementById('model-donuts-grid');
+    if (watchModelsContainer && watchModelUse.length > 0) {
         // Aggregate loc_by_model_feature across all filtered users
         const locByModelFeature = {}; // { [model]: { [feature]: value } }
         for (const u of filteredUsers) {
@@ -1169,15 +1404,94 @@ function renderDonutSection(filteredUsers) {
                 }
             }
         }
-        modelDonutsContainer.innerHTML = modelDonuts.map(model =>
+        watchModelsContainer.innerHTML = watchModelUse.map(model =>
             `<div id="donut-model-feat-${CSS.escape(model)}"></div>`
         ).join('');
-        for (const model of modelDonuts) {
+        for (const model of watchModelUse) {
             const el = document.getElementById('donut-model-feat-' + CSS.escape(model));
             if (el) el.innerHTML = buildDonutChart(locByModelFeature[model] || {}, model);
         }
-    } else if (modelDonutsContainer) {
-        modelDonutsContainer.innerHTML = '';
+    } else if (watchModelsContainer) {
+        watchModelsContainer.innerHTML = '';
     }
 }
 
+// ── AI Maturity Section ──────────────────────────────────────────────────────
+
+let _maturityTooltipEl = null;
+
+function _getMaturityTooltip() {
+    if (!_maturityTooltipEl) {
+        _maturityTooltipEl = document.createElement('div');
+        _maturityTooltipEl.className = 'maturity-tooltip';
+        _maturityTooltipEl.style.display = 'none';
+        document.body.appendChild(_maturityTooltipEl);
+    }
+    return _maturityTooltipEl;
+}
+
+function _positionMaturityTooltip(e) {
+    const tt = _getMaturityTooltip();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const tw = tt.offsetWidth || 380;
+    const th = tt.offsetHeight || 100;
+    let x = e.clientX + 18;
+    let y = e.clientY + 14;
+    if (x + tw > vw - 8) x = e.clientX - tw - 8;
+    if (y + th > vh - 8) y = e.clientY - th - 8;
+    tt.style.left = x + 'px';
+    tt.style.top  = y + 'px';
+}
+
+function renderMaturitySection(users) {
+    const content = document.getElementById('maturity-content');
+    if (!content) return;
+
+    const { avgDauPct, avgTurns, avgPerf } = computeTeamAggregates(users, currentMonthFilter);
+    const ctx = { watchModelUse, avgDauPct, avgTurns, avgPerf, computeStreak: computeCurrentStreak, prevMonthStats, preferredEnterpriseIds: globalPreferredEnterpriseIds };
+
+    const STATUS_EMOJI = { green: '🟢', amber: '🟡', red: '🔴', gray: '⚪' };
+    const STATUS_VALUE_CLASS = { green: 'maturity-val-green', amber: 'maturity-val-amber', red: 'maturity-val-red', gray: '' };
+
+    function esc(s) {
+        return String(s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    const rows = MATURITY_RULES.map(rule => {
+        const { status, value, explanation } = rule.evaluate(users, ctx);
+        const rec = (status !== 'green' && status !== 'gray')
+            ? (MATURITY_RECOMMENDATIONS[rule.id] || '')
+            : 'No action required, keep going!';
+        return { rule, status, value, explanation, rec };
+    });
+
+    content.innerHTML = `<div class="maturity-grid">${
+        rows.map(({ rule, status, value, explanation, rec }) => `
+            <div class="maturity-row" data-explain="${esc(explanation)}">
+                <span class="maturity-icon">${STATUS_EMOJI[status]}</span>
+                <span class="maturity-label">
+                    <span class="maturity-name">${esc(rule.name)}</span>
+                    <span class="maturity-value ${STATUS_VALUE_CLASS[status]}">( ${esc(value)} )</span>
+                </span>
+                <span class="maturity-rec maturity-rec-${status}">${rec}</span>
+                <span class="maturity-info-icon" aria-hidden="true">ⓘ</span>
+            </div>`).join('')
+    }</div>`;
+
+    // Tooltip shows only calculation logic
+    const tt = _getMaturityTooltip();
+    content.querySelectorAll('.maturity-row').forEach(row => {
+        row.addEventListener('mouseenter', e => {
+            tt.innerHTML = `<div class="maturity-tt-explain">${esc(row.dataset.explain || '')}</div>`;
+            tt.style.display = 'block';
+            _positionMaturityTooltip(e);
+        });
+        row.addEventListener('mousemove', _positionMaturityTooltip);
+        row.addEventListener('mouseleave', () => { tt.style.display = 'none'; });
+    });
+}

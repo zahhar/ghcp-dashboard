@@ -51,9 +51,20 @@ const mimeTypes = {
 const documentingLanguages = ['markdown', 'text', 'prompt', 'instructions', 'mermaid', 'plaintext', 'bibtex', 'snippets', 'latex', 'restructuredtext', 'search-result', 'skill', 'tex', 'chatagent'];
 
 function serveStaticFile(req, res) {
-    let filePath = path.join(PUBLIC_DIR, req.url === '/' ? 'index.html' : req.url);
-    const extname = String(path.extname(filePath)).toLowerCase();
-    const contentType = mimeTypes[extname] || 'application/octet-stream';
+    const reqPath = new URL(req.url, `http://${req.headers.host}`).pathname;
+    let assetPath = decodeURIComponent(reqPath);
+    if (assetPath === '/') assetPath = '/index.html';
+
+    const normalizedAssetPath = assetPath.replace(/^\/+/, '');
+
+    const extname = String(path.extname(normalizedAssetPath)).toLowerCase();
+    const looksLikeAsset = extname && Object.prototype.hasOwnProperty.call(mimeTypes, extname);
+
+    // For SPA deep links (e.g. /team/month), return index.html.
+    // For real assets, keep strict 404 behavior.
+    const relativePath = looksLikeAsset ? normalizedAssetPath : 'index.html';
+    const filePath = path.join(PUBLIC_DIR, relativePath);
+    const contentType = mimeTypes[String(path.extname(filePath)).toLowerCase()] || 'application/octet-stream';
 
     fs.readFile(filePath, (error, content) => {
         if (error) {
@@ -124,10 +135,12 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
     const orgLabelMap = {};
     const enterpriseFilterKnownUsersMap = {};
     const orgFilterKnownUsersMap = {};
+    const preferredEnterpriseIds = [];
     if (Array.isArray(config.enterprises)) {
         for (const e of config.enterprises) {
             if (e.id != null) enterpriseLabelMap[String(e.id)] = e.label || String(e.id);
             if (e.id != null) enterpriseFilterKnownUsersMap[String(e.id)] = e.filter_to_known_users === true;
+            if (e.id != null && e.preferred_license === true) preferredEnterpriseIds.push(String(e.id));
             if (Array.isArray(e.organizations)) {
                 for (const o of e.organizations) {
                     if (o.id != null) orgLabelMap[String(o.id)] = o.label || String(o.id);
@@ -751,7 +764,8 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
         availableTeams,
         availableEnterprises,
         allLanguages,
-        modelDonuts: Array.isArray(config.model_donuts) ? config.model_donuts : []
+        watchModelUse: Array.isArray(config.watch_model_use) ? config.watch_model_use : [],
+        preferredEnterpriseIds
     };
 }
 
