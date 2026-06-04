@@ -1052,7 +1052,7 @@ function computeTeamAggregates(users, month) {
     activeBizDays = dauData.filter(d => !d.isWeekend && d.count > 0);
     if (activeBizDays.length && total > 0) {
         const dauSum = activeBizDays.reduce((s, d) => s + d.count, 0);
-        avgDAU = Math.round(dauSum / activeBizDays.length);
+        avgDAU = dauSum / activeBizDays.length;
         avgDauPct = Math.round(avgDAU / total * 100);
     }
 
@@ -1076,6 +1076,7 @@ function renderDAUChart() {
     const avgStat = document.getElementById('dau-avg-stat');
     if (avgStat) {
         const { avgDauPct: pct, avgDAU, avgTurns, avgPerf, activeBizDays } = computeTeamAggregates(filteredUsers, currentMonthFilter);
+        const avgDAUDisplay = Number(avgDAU).toFixed(1);
         if (activeBizDays.length) {
             // prev-month equivalents (only available when a month is selected)
             let prevAvgTurns = null, prevAvgPerf = null, prevPct = null;
@@ -1100,7 +1101,7 @@ function renderDAUChart() {
                 <div style="display:flex;gap:1.5rem;align-items:flex-start">
                     <div style="text-align:right">
                         <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-bottom:2px">Avg DAU</div>
-                        <div style="font-size:1rem;color:var(--text-main);font-weight:600;line-height:1;white-space:nowrap">${avgDAU}</div>
+                        <div style="font-size:1rem;color:var(--text-main);font-weight:600;line-height:1;white-space:nowrap">${avgDAUDisplay}</div>
                         <div style="font-size:0.75rem;color:var(--text-muted);margin-top:1px;white-space:nowrap">${pct}% ${diffBadge(pct, prevPct, true)}</div>
                     </div>
                     <div style="width:1px;background:rgba(255,255,255,0.1);align-self:stretch"></div>
