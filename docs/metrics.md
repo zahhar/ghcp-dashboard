@@ -27,6 +27,9 @@ A guide to every number, chart, and column in the GitHub Copilot Dashboard.
    - [by Activity](#by-activity)
    - [Coding by Language](#coding-by-language)
    - [Steering by Syntax](#steering-by-syntax)
+6. [Maturity metrics](#6-maturity-metrics)
+   - [Status colors](#status-colors)
+   - [Rules and thresholds](#rules-and-thresholds)
 
 ---
 
@@ -250,3 +253,35 @@ Share of **code LOC** broken down by programming language. Document/prompt langu
 ### Steering by Syntax
 
 Share of **steering LOC** broken down by document type (Markdown, plain text, `.prompt`, `.instructions`, LaTeX, etc.).
+
+---
+
+## 6. Maturity metrics
+
+The **AI Maturity** block evaluates the currently filtered team (same filters as table/charts) using rule-based statuses from `public/maturity-rules.js`.
+
+### Status colors
+
+- 🟢 **Green** — target state
+- 🟡 **Amber** — acceptable but needs improvement
+- 🔴 **Red** — immediate concern
+- ⚪ **Gray** — not enough data for evaluation
+
+### Rules and thresholds
+
+| Metric | How calculated (from code) | Green | Amber | Red | Gray |
+|---|---|---|---|---|---|
+| **DAU** | Uses `avgDauPct` from business days with data. | `>= 70%` | `40–69%` | `< 40%` | no DAU data |
+| **Use Consistency** | For active users (`!revoked && !never_active`), compute each user's best uninterrupted **working-day** streak; count users with streak `>= 5`. | all active users have streak `>= 5` | at least one has streak `>= 5` | none has streak `>= 5` | no active users |
+| **Agentic Coding** | Team-wide check for feature signals: `CLI`, `Custom mode`, `Agent mode`, `Agent edit`, `Agent mode panel`, `Steering`, `Skills`. | all signals used | some signals used | no signals used | — |
+| **Agentic AI Champion** | Uses `ai_adoption_phase_number` on non-revoked users. | at least one user in phase 2 or 3 | no users in phase 2/3 **and** no users in phase 0 | at least one user in phase 0 | no users |
+| **Avg Turns** | `avgTurns = total turns / non-revoked users`. | `>= 100` turns/user/month | `50–99` | `< 50` | no users |
+| **Avg Perf** | `avgPerf = average(perf_score)` over active non-revoked users. | `>= 100` LOC/user/day | `50–99` | `< 50` | no active users |
+| **Perf Consistency** | Compare current vs previous month for comparable users (non-revoked, active, with previous `perf_score > 0`): `dropPct = (prev-curr)/prev`. | no drop `> 50%` | max drop `> 50%` and `< 100%` | any drop `>= 100%` (to zero) | no comparable previous-period data |
+| **Optimal Model Use** | Active users are compliant when normalized `favorite_model` is **not** in `config.watch_model_use`. | all compliant | some compliant | none compliant | no watch list configured |
+| **Licence Use** | Uses account-level attribution and preferred enterprise IDs (`preferred_license: true`). | all users active, single-account, and each account belongs to preferred enterprise | license setup non-ideal (mixed enterprises and/or multi-account) | immediate red if any preferred-enterprise account exists but has no usage in selected period; also red if any `never_active` user | no users |
+
+> Notes:
+>
+> - Licence rule evaluates account-level usage from `account_daily` + account enterprise attribution.
+> - In user popup, preferred-enterprise accounts with no activity are marked with 🔴 near account title and in no-data message.

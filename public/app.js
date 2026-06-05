@@ -811,8 +811,21 @@ ${(() => { const pn = user.ai_adoption_phase_number ?? 0; const prevPn = prev ? 
 
 function buildUserMetaSection(user, { showIdes = true } = {}) {
     const rows = [];
-    if (user.organization_label) {
-        rows.push(`<div class="meta-row"><span class="meta-label">Organization:</span> ${user.organization_label}</div>`);
+    const emails = Array.isArray(user.emails)
+        ? [...new Map(
+            user.emails
+                .map(email => String(email || '').trim())
+                .filter(Boolean)
+                .map(email => [email.toLowerCase(), email])
+        ).values()]
+        : [];
+
+    if (emails.length) {
+        const emailLinks = emails
+            .map(email => `<a href="mailto:${email}" style="color:inherit;text-decoration:underline;text-underline-offset:2px">${email}</a>`)
+            .join(', ');
+        const mailtoAll = `mailto:${emails.join(',')}`;
+        rows.push(`<div class="meta-row"><span class="meta-label">Emails:</span> ${emailLinks} <span style="margin-left:0.5rem"><a href="${mailtoAll}" style="color:var(--text-main);font-weight:600;text-decoration:underline;text-underline-offset:2px">Send to All</a></span></div>`);
     }
     if (user.all_languages_list && user.all_languages_list.length) {
         rows.push(`<div class="meta-row"><span class="meta-label">Languages:</span> ${user.all_languages_list.join(', ')}</div>`);
@@ -843,16 +856,41 @@ function buildUserMetaSection(user, { showIdes = true } = {}) {
 
 // ── User detail modal ──
 
+function isPreferredEnterpriseAccount(login, accountEnterpriseIds, preferredEnterpriseIds) {
+    const preferred = new Set((preferredEnterpriseIds || []).map(String));
+    if (!preferred.size) return false;
+    const ids = Array.isArray(accountEnterpriseIds?.[login]) ? accountEnterpriseIds[login].map(String) : [];
+    if (ids.length > 0) {
+        return ids.some(id => preferred.has(id));
+    }
+    // Heuristic fallback for provisioned-but-unused customer accounts.
+    return String(login || '').toLowerCase().endsWith('external');
+}
+
+function isAccountUsedInCurrentPeriod(login, accountDaily) {
+    const rows = accountDaily?.[login];
+    return Array.isArray(rows) && rows.length > 0;
+}
+
+function getUnusedPreferredAccounts(user) {
+    const accounts = Array.isArray(user.accounts) ? user.accounts : [];
+    const accountDaily = user.account_daily || {};
+    const accountEnterpriseIds = user.account_enterprise_ids || {};
+    return accounts.filter(login =>
+        isPreferredEnterpriseAccount(login, accountEnterpriseIds, globalPreferredEnterpriseIds) &&
+        !isAccountUsedInCurrentPeriod(login, accountDaily)
+    );
+}
+
 function openUserModal(user) {
     const overlay = document.getElementById('user-modal');
     const accounts = Array.isArray(user.accounts) ? user.accounts : [user.user_login];
-    const accountsLabel = accounts.length > 1
-        ? `<span style="font-size:0.75em;color:var(--text-muted);font-weight:400">${accounts.join(' · ')}</span>`
-        : `<span style="font-size:0.75em;color:var(--text-muted);font-weight:400">${user.user_login}</span>`;
-    const roleAndLogin = user.role
-        ? `${user.role}  ·  ${accountsLabel}`
-        : accountsLabel;
-    let titleHTML = user.human_name + (user.team ? '  ·  ' + user.team : '') + '  ·  ' + roleAndLogin;
+    const unusedPreferredAccounts = new Set(getUnusedPreferredAccounts(user));
+    let showIdesInMeta = accounts.length === 1;
+    const titleParts = [user.human_name || user.user_login];
+    if (user.team) titleParts.push(user.team);
+    if (user.role) titleParts.push(user.role);
+    const titleHTML = titleParts.join('  ·  ');
     document.getElementById('modal-title').innerHTML = titleHTML;
 
     // Build chart section: if user has multiple accounts, show aggregate + per-account charts
@@ -860,6 +898,7 @@ function openUserModal(user) {
     const accountDaily = user.account_daily || {};
     const accountIdes = user.account_ides || {};
     const accountCli = user.account_cli || {};
+    const accountEnterpriseLabels = user.account_enterprise_labels || {};
 
     function buildAccountIdeCliHTML(login) {
         const acct = accountIdes[login];
@@ -887,19 +926,32 @@ function openUserModal(user) {
 
     if (accounts.length > 1) {
         // Aggregate chart first
-        chartHTML += `<div style="margin-bottom:0.5rem"><div style="font-size:0.8em;color:var(--text-muted);margin-bottom:4px;font-weight:600">📊 Combined (all accounts)</div>${buildCombinedChart(user.daily || [], currentMonthFilter)}</div>`;
+        chartHTML += `<div class="user-meta-section" style="margin-top:0;padding-top:0;border-top:none"><div style="font-size:0.8em;color:var(--text-muted);margin-bottom:4px;font-weight:600">📊 Combined (all accounts)</div>${buildCombinedChart(user.daily || [], currentMonthFilter)}</div>`;
         // Per-account charts below
         for (const login of accounts) {
             const acctData = accountDaily[login] || [];
             const ideCliHTML = buildAccountIdeCliHTML(login);
-            const enterpriseSuffix = user.enterprise_label ? ` (${user.enterprise_label})` : '';
-            chartHTML += `<hr style="border:none;border-top:1px solid var(--border);margin:0.75rem 0"><div><div style="font-size:0.8em;color:var(--text-muted);margin-bottom:4px;font-weight:600">🔑 ${login}${enterpriseSuffix}</div>${ideCliHTML}${buildCombinedChart(acctData, currentMonthFilter)}</div>`;
+            const enterpriseLabel = accountEnterpriseLabels[login] || '';
+            const enterpriseSuffix = enterpriseLabel ? ` (${enterpriseLabel})` : '';
+            const warning = unusedPreferredAccounts.has(login)
+                ? '<span style="margin-left:0.35rem" title="Preferred enterprise license account has no usage in selected period">🔴</span>'
+                : '';
+            chartHTML += `<div class="user-meta-section"><div style="font-size:0.8em;color:var(--text-muted);margin-bottom:4px;font-weight:600">🔑 ${login}${enterpriseSuffix}${warning}</div>${ideCliHTML}${buildCombinedChart(acctData, currentMonthFilter, { noDataEmoji: unusedPreferredAccounts.has(login) ? '🔴' : '' })}</div>`;
         }
     } else {
-        chartHTML = buildCombinedChart(user.daily || [], currentMonthFilter);
+        const onlyLogin = accounts[0] || user.user_login;
+        const isPreferredUnused = unusedPreferredAccounts.has(onlyLogin);
+        const enterpriseLabel = accountEnterpriseLabels[onlyLogin] || user.enterprise_label || '';
+        const enterpriseSuffix = enterpriseLabel ? ` (${enterpriseLabel})` : '';
+        const ideCliHTML = buildAccountIdeCliHTML(onlyLogin);
+        if (ideCliHTML) showIdesInMeta = false;
+        const warning = isPreferredUnused
+            ? '<span style="margin-left:0.35rem" title="Preferred enterprise license account has no usage in selected period">🔴</span>'
+            : '';
+        chartHTML = `<div class="user-meta-section" style="margin-top:0;padding-top:0;border-top:none"><div style="font-size:0.8em;color:var(--text-muted);margin-bottom:4px;font-weight:600">🔑 ${onlyLogin}${enterpriseSuffix}${warning}</div>${ideCliHTML}${buildCombinedChart(user.daily || [], currentMonthFilter, { noDataEmoji: isPreferredUnused ? '🔴' : '' })}</div>`;
     }
 
-    document.getElementById('modal-body').innerHTML = chartHTML + buildUserMetaSection(user, { showIdes: accounts.length === 1 });
+    document.getElementById('modal-body').innerHTML = chartHTML + buildUserMetaSection(user, { showIdes: showIdesInMeta });
     overlay.style.display = 'flex';
 
     function close() {
@@ -1123,8 +1175,11 @@ function renderDAUChart() {
     }
 }
 
-function buildCombinedChart(daily, month) {
-    if (!daily.length && !month) return '<p style="color:var(--text-muted)">No daily data available.</p>';
+function buildCombinedChart(daily, month, opts = {}) {
+    if (!daily.length && !month) {
+        const marker = opts.noDataEmoji ? `${opts.noDataEmoji} ` : '';
+        return `<p style="color:var(--text-muted)">${marker}No daily data available.</p>`;
+    }
 
     const allDays = fillDailyGaps(daily, month);
 

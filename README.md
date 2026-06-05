@@ -105,6 +105,7 @@ Open `http://localhost:3000` - you should see mocked data loaded.
 3. Copy `mock/config.json` to `data/config.json`
 4. Edit `data/config.json`. Each enterprise and organization entry that should be synced via the API must have:
    - `slug` — the GitHub enterprise or organization slug used in API URLs
+   - `label` — optional display name used in UI/logs; when omitted, `slug` is used as fallback
    - `env_token` — name of the `.env` variable holding the access token for that scope
    - `last_report_day` — set to `""` on first run; updated automatically after each sync
    - `missing_data_days` — leave as `[]`; managed automatically
@@ -113,19 +114,26 @@ Open `http://localhost:3000` - you should see mocked data loaded.
 
    Enterprise and organization metrics are fetched independently — enterprise-level data is pulled first, then each org under it.
 
-5. (optionally) Edit `data/users.json` to map Github usernames to human readable names, assign roles, indicate revoked licenses, and group users into teams. All fields are optional. 
+5. (optionally) Edit `data/users.json` to map GH usernames/accounts to display names, teams, roles, revoked status, and optional emails.
 
-   Each entry looks like:
-   ```json
-   "github-login": {
-     "name": "Display Name",
-     "team": "Team Name",
-     "role": "Senior Developer",
-     "revoked": false
-   }
-   ```
+    Current schema is an **array**:
+    ```json
+    [
+       {
+          "accounts": ["github-login", "secondary-login"],
+          "name": "Display Name",
+          "team": "Team Name",
+          "role": "Senior Developer",
+          "revoked": false,
+          "emails": ["user@company.com"]
+       }
+    ]
+    ```
 
-   > ⚠️ **Keys in `users.json` must always be lowercase** (e.g. `"github-login"`, not `"GitHub-Login"`). The app lowercases `user_login` values from the NDJSON at load time, so a mixed-case key will never match.
+    Notes:
+    - `accounts` should contain all known logins for the same person (first entry is canonical in UI grouping).
+    - `emails` is optional; values are displayed and can be used for account cleanup workflows.
+    - Account logins should be lowercase for reliable matching.
 
 ### 4) Pull/update metrics data
 

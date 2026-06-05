@@ -1,226 +1,50 @@
-{
-  "sappho": {
-    "name": "Sappho",
+[
+  {
+    "accounts": [
+      "alice-example"
+    ],
+    "name": "Alice Example",
     "revoked": false,
-    "team": "mercury"
+    "team": "alpha",
+    "role": "Engineer",
+    "emails": [
+      "alice-example@sample.org"
+    ]
   },
-  "homer": {
-    "name": "Homer",
+  {
+    "accounts": [
+      "bob-external",
+      "bob_epam"
+    ],
+    "name": "Bob Example",
     "revoked": false,
-    "team": "mercury"
+    "team": "alpha",
+    "role": "Key Engineer",
+    "emails": [
+      "bob-external@sample.org",
+      "bob@vendor.example"
+    ]
   },
-  "murasaki_shikibu": {
-    "name": "Murasaki Shikibu",
-    "revoked": false,
-    "team": "venus"
-  },
-  "dante_alighieri": {
-    "name": "Dante Alighieri",
-    "revoked": false,
-    "team": "mars"
-  },
-  "sei_shonagon": {
-    "name": "Sei Shonagon",
-    "revoked": false,
-    "team": "venus"
-  },
-  "li_bai": {
-    "name": "Li Bai",
-    "revoked": false,
-    "team": "mars"
-  },
-  "christine_de_pizan": {
-    "name": "Christine de Pizan",
-    "revoked": false,
-    "team": "jupiter"
-  },
-  "du_fu": {
-    "name": "Du Fu",
-    "revoked": false,
-    "team": "mars"
-  },
-  "mirabai": {
-    "name": "Mirabai",
-    "revoked": false,
-    "team": "mars"
-  },
-  "lady_mary_wortley_montagu": {
-    "name": "Mary Montagu",
-    "team": "saturn"
-  },
-  "heinrich_heine": {
-    "name": "Heinrich Heine",
-    "team": "uranus"
-  },
-  "ban_zhao": {
-    "name": "Ban Zhao",
-    "team": "venus"
-  },
-  "nizami_ganjavi": {
-    "name": "Nizami Ganjavi",
-    "team": "uranus"
-  },
-  "jose_rizal": {
-    "name": "Jose Rizal",
-    "team": "neptune"
-  },
-  "ada_lovelace": {
-    "name": "Ada Lovelace",
-    "team": "mars"
-  },
-  "geoffrey_chaucer": {
-    "name": "Geoffrey Chaucer",
-    "revoked": false,
-    "team": "mercury"
-  },
-  "phillis_wheatley": {
-    "name": "Phillis Wheatley",
-    "revoked": false,
-    "team": "mars"
-  },
-  "miguel_de_cervantes": {
-    "name": "Miguel de Cervantes",
-    "revoked": false,
-    "team": "pluto"
-  },
-  "jane_austen": {
-    "name": "Jane Austen",
-    "revoked": false,
-    "team": "uranus"
-  },
-  "william_shakespeare": {
-    "name": "William Shakespeare",
-    "revoked": false,
-    "team": "mars"
-  },
-  "mary_shelley": {
-    "name": "Mary Shelley",
-    "revoked": false,
-    "team": "uranus"
-  },
-  "matsuo_basho": {
-    "name": "Matsuo Basho",
-    "revoked": false,
-    "team": "mars"
-  },
-  "george_sand": {
-    "name": "George Sand",
-    "revoked": false,
-    "team": "neptune"
-  },
-  "voltaire": {
-    "name": "Voltaire",
-    "revoked": false,
-    "team": "moon"
-  },
-  "emily_bronte": {
-    "name": "Emily Bronte",
-    "revoked": false,
-    "team": "uranus"
-  },
-  "johann_wolfgang_von_goethe": {
-    "name": "J. W. von Goethe",
-    "revoked": false,
-    "team": "mars"
-  },
-  "charlotte_bronte": {
-    "name": "Charlotte Bronte",
-    "revoked": false,
-    "team": "mars"
-  },
-  "victor_hugo": {
-    "name": "Victor Hugo",
-    "revoked": false,
-    "team": "mars"
-  },
-  "emily_dickinson": {
-    "name": "Emily Dickinson",
-    "revoked": false,
-    "team": "ceres"
-  },
-  "edgar_allan_poe": {
-    "name": "Edgar Allan Poe",
+  {
+    "accounts": [
+      "charlie-legacy"
+    ],
+    "name": "Charlie Example",
     "revoked": true,
-    "team": "pluto"
+    "team": "beta",
+    "role": "Architect"
   },
-  "christina_rossetti": {
-    "name": "Christina Rossetti",
+  {
+    "accounts": [
+      "dana-shared",
+      "dana-external"
+    ],
+    "name": "Dana Example",
     "revoked": false,
-    "team": "mercury"
-  },
-  "charles_dickens": {
-    "name": "Charles Dickens",
-    "revoked": false,
-    "team": "jupiter"
-  },
-  "louisa_may_alcott": {
-    "name": "Louisa May Alcott",
-    "revoked": false,
-    "team": "europa"
-  },
-  "alexander_pushkin": {
-    "name": "Alexander Pushkin",
-    "revoked": false,
-    "team": "titan"
-  },
-  "harriet_beecher_stowe": {
-    "name": "Harriet B. Stowe",
-    "revoked": false,
-    "team": "jupiter"
-  },
-  "leo_tolstoy": {
-    "name": "Leo Tolstoy",
-    "revoked": true,
-    "team": "mars"
-  },
-  "george_eliot": {
-    "name": "George Eliot",
-    "revoked": false,
-    "team": "mercury"
-  },
-  "fyodor_dostoevsky": {
-    "name": "Fyodor Dostoevsky",
-    "revoked": false,
-    "team": "moon"
-  },
-  "elizabeth_barrett_browning": {
-    "name": "Elizabeth B. Browning",
-    "revoked": false,
-    "team": "moon"
-  },
-  "walt_whitman": {
-    "name": "Walt Whitman",
-    "revoked": true,
-    "team": "mercury"
-  },
-  "selma_lagerlof": {
-    "name": "Selma Lagerlof",
-    "revoked": false,
-    "team": "sun"
-  },
-  "rabindranath_tagore": {
-    "name": "Rabindranath Tagore",
-    "revoked": false,
-    "team": "mercury"
-  },
-  "tarabai_shinde": {
-    "name": "Tarabai Shinde",
-    "revoked": false,
-    "team": "neptune"
-  },
-  "mark_twain": {
-    "name": "Mark Twain",
-    "revoked": false,
-    "team": "mercury"
-  },
-  "qiu_jin": {
-    "name": "Qiu Jin",
-    "revoked": false,
-    "team": "uranus"
-  },
-  "oscar_wilde": {
-    "name": "Oscar Wilde",
-    "revoked": false,
-    "team": "earth"
+    "team": "beta",
+    "role": "Team Lead",
+    "emails": [
+      "dana-external@sample.org"
+    ]
   }
-}
+]

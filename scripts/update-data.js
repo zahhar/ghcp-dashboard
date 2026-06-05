@@ -260,7 +260,7 @@ async function processScope(entity, scopeType, yesterday, existingKeys) {
     }
 
     if (!entity.slug) {
-        console.error(`  ❌ ${scopeLabel} "${entity.label || entity.id}" is missing "slug" — skipping`);
+        console.error(`  ❌ ${scopeLabel} "${entity.label || entity.slug || entity.id}" is missing "slug" — skipping`);
         return;
     }
 
@@ -395,7 +395,7 @@ async function main() {
     const { existingKeys } = collectExistingDataState(existingDataLines);
 
     for (const ent of config.enterprises) {
-        const entHeader = `🏬  ${ent.label || ent.id || 'enterprise'}  (${ent.slug || 'no slug'})`;
+        const entHeader = `🏬  ${ent.label || ent.slug || ent.id || 'enterprise'}  (${ent.slug || 'no slug'})`;
         console.log(`\n${'─'.repeat(60)}`);
         console.log(entHeader);
         console.log('─'.repeat(60));
@@ -404,7 +404,7 @@ async function main() {
 
         if (Array.isArray(ent.organizations) && ent.organizations.length > 0) {
             for (const org of ent.organizations) {
-                const orgHeader = `🏢  ${org.label || org.id || 'organization'}  (${org.slug || 'no slug'})`;
+                const orgHeader = `🏢  ${org.label || org.slug || org.id || 'organization'}  (${org.slug || 'no slug'})`;
                 console.log(`\n  ${'-'.repeat(56)}`);
                 console.log(`  ${orgHeader}`);
                 console.log(`  ${'-'.repeat(56)}`);

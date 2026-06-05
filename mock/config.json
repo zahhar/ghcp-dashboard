@@ -1,22 +1,35 @@
 {
   "enterprises": [
     {
-      "id": "your-enterprise-id",
-      "label": "Your Enterprise",
-      "slug": "your-github-enterprise",
+      "id": "100001",
+      "label": "Customer Enterprise",
+      "slug": "customer-enterprise",
       "env_token": "GITHUB_ENTERPRISE_TOKEN",
-      "last_report_day": "",
+      "last_report_day": "2026-03-01",
       "missing_data_days": [],
+      "filter_to_known_users": true,
+      "preferred_license": true,
       "organizations": [
         {
-          "id": "your-org-id",
-          "label": "Your Organization",
-          "slug": "your-github-organization",
+          "id": "200001",
+          "label": "Customer Engineering",
+          "slug": "customer-engineering",
           "env_token": "GITHUB_ORG_TOKEN",
           "last_report_day": "2026-03-01",
+          "filter_to_known_users": true,
           "missing_data_days": []
         }
       ]
+    },
+    {
+      "id": "100002",
+      "label": "Vendor Enterprise",
+      "filter_to_known_users": false
     }
+  ],
+  "watch_model_use": [
+    "gpt-4o",
+    "gpt-4.1",
+    "gemini-3.5-flash"
   ]
 }

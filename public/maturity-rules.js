@@ -269,6 +269,42 @@ const MATURITY_RULES = [
                 return { status: 'gray', value: 'No users', explanation: 'No users in current view.' };
             }
 
+            const isPreferredEnterpriseAccount = (u, login) => {
+                if (!preferred.size) return false;
+                const ids = Array.isArray(u.account_enterprise_ids?.[login])
+                    ? u.account_enterprise_ids[login].map(String)
+                    : [];
+                if (ids.length > 0) {
+                    return ids.some(id => preferred.has(id));
+                }
+                // Heuristic fallback for provisioned-but-unused customer accounts.
+                return String(login || '').toLowerCase().endsWith('external');
+            };
+
+            const isAccountUsedInPeriod = (u, login) => {
+                const rows = u.account_daily?.[login];
+                return Array.isArray(rows) && rows.length > 0;
+            };
+
+            // Red (immediate): preferred-enterprise account exists in users list but has no usage in selected period.
+            const preferredUnusedAccounts = [];
+            for (const u of all) {
+                const accounts = Array.isArray(u.accounts) ? u.accounts : [];
+                for (const login of accounts) {
+                    if (!isPreferredEnterpriseAccount(u, login)) continue;
+                    if (!isAccountUsedInPeriod(u, login)) {
+                        preferredUnusedAccounts.push(`${u.human_name} (${login})`);
+                    }
+                }
+            }
+            if (preferredUnusedAccounts.length > 0) {
+                return {
+                    status: 'red',
+                    value: `${preferredUnusedAccounts.length} preferred license${preferredUnusedAccounts.length > 1 ? 's' : ''} unused`,
+                    explanation: `Preferred enterprise account(s) were provisioned but not used in the selected period: ${preferredUnusedAccounts.join(', ')}. Red = immediate when any preferred-enterprise license is unused.`,
+                };
+            }
+
             // Red: never-active users = licensed but never used GHCP (wasted license)
             const neverActive = all.filter(u => u.never_active);
             if (neverActive.length > 0) {
@@ -286,11 +322,11 @@ const MATURITY_RULES = [
 
             // Green: all single-account from preferred enterprise
             if (preferred.size > 0 && multiAccount.length === 0) {
-                const allFromPreferred = active.every(u =>
-                    Array.isArray(u.enterprise_ids) &&
-                    u.enterprise_ids.length > 0 &&
-                    u.enterprise_ids.every(eid => preferred.has(String(eid)))
-                );
+                const allFromPreferred = active.every(u => {
+                    const accounts = Array.isArray(u.accounts) ? u.accounts : [];
+                    if (accounts.length !== 1) return false;
+                    return isPreferredEnterpriseAccount(u, accounts[0]);
+                });
                 if (allFromPreferred) {
                     return {
                         status: 'green',

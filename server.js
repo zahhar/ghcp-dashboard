@@ -138,12 +138,12 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
     const preferredEnterpriseIds = [];
     if (Array.isArray(config.enterprises)) {
         for (const e of config.enterprises) {
-            if (e.id != null) enterpriseLabelMap[String(e.id)] = e.label || String(e.id);
+            if (e.id != null) enterpriseLabelMap[String(e.id)] = e.label || e.slug || String(e.id);
             if (e.id != null) enterpriseFilterKnownUsersMap[String(e.id)] = e.filter_to_known_users === true;
             if (e.id != null && e.preferred_license === true) preferredEnterpriseIds.push(String(e.id));
             if (Array.isArray(e.organizations)) {
                 for (const o of e.organizations) {
-                    if (o.id != null) orgLabelMap[String(o.id)] = o.label || String(o.id);
+                    if (o.id != null) orgLabelMap[String(o.id)] = o.label || o.slug || String(o.id);
                     if (o.id != null) {
                         const orgFilterValue = o.filter_to_known_users;
                         const entFilterValue = e.filter_to_known_users;
@@ -264,6 +264,7 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                     accountDaily: {},  // { [login]: { [day]: { user_initiated, code_generation, cli_turns, code_loc, doc_loc } } }
                     accountIdes: {},   // { [login]: { ides: {name:loc}, ideVersions: {name:{...}} } }
                     accountCli: {},    // { [login]: { cli_version, last_seen_day } }
+                    accountEnterpriseIds: {}, // { [login]: Set<enterprise_id> }
                     allLocByModel: {},
                     allLocByLanguage: {},
                     modelFeatures: {},  // { [model]: { [feature]: value } }
@@ -277,6 +278,10 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             stats.user_initiated_interaction_count += (entry.user_initiated_interaction_count || 0);
             if (entry.enterprise_id != null) stats.enterprise_ids.add(String(entry.enterprise_id));
             if (entry.organization_id != null) stats.organization_ids.add(String(entry.organization_id));
+            if (entry.enterprise_id != null) {
+                if (!stats.accountEnterpriseIds[rawLogin]) stats.accountEnterpriseIds[rawLogin] = new Set();
+                stats.accountEnterpriseIds[rawLogin].add(String(entry.enterprise_id));
+            }
             stats.code_generation_activity_count += (entry.code_generation_activity_count || 0);
             stats.code_acceptance_activity_count += (entry.code_acceptance_activity_count || 0);
             stats.cli_prompt_count += (entry.totals_by_cli?.prompt_count || 0);
@@ -578,6 +583,7 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
         const userTeam = mapping.team || '';
         const userRole = mapping.role || '';
         const userAccounts = Array.isArray(mapping.accounts) ? mapping.accounts : [user.user_login];
+        const userEmails = Array.isArray(mapping.emails) ? mapping.emails.filter(Boolean) : [];
 
         const enterpriseIds = [...user.enterprise_ids];
         const organizationIds = [...user.organization_ids];
@@ -642,6 +648,7 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                 .sort(([a], [b]) => a.localeCompare(b))
                 .map(([day, d]) => ({ day, user_initiated: d.user_initiated, code_generation: d.code_generation, cli_turns: d.cli_turns, code_loc: d.code_loc, doc_loc: d.doc_loc })),
             accounts: userAccounts,
+            emails: userEmails,
             account_daily: Object.fromEntries(
                 Object.entries(user.accountDaily).map(([login, dayMap]) => [
                     login,
@@ -688,6 +695,15 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             account_cli: Object.fromEntries(
                 Object.entries(user.accountCli).map(([login, c]) => [login, c.cli_version])
             ),
+            account_enterprise_ids: Object.fromEntries(
+                Object.entries(user.accountEnterpriseIds).map(([login, set]) => [login, [...set].sort()])
+            ),
+            account_enterprise_labels: Object.fromEntries(
+                Object.entries(user.accountEnterpriseIds).map(([login, set]) => {
+                    const ids = [...set].sort();
+                    return [login, ids.map(id => enterpriseLabelMap[id] || id).join(', ')];
+                })
+            ),
             accountCli: undefined
         };
     });
@@ -710,6 +726,7 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             team: mapping.team || '',
             role: mapping.role || '',
             accounts: mapping.accounts,
+            emails: Array.isArray(mapping.emails) ? mapping.emails.filter(Boolean) : [],
             enterprise_ids: [],
             organization_ids: [],
             enterprise_label: '',
@@ -728,6 +745,8 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             ide_versions: {}, cli_version: null,
             all_doc_languages_list: [], daily: [],
             account_daily: {},
+            account_enterprise_ids: {},
+            account_enterprise_labels: {},
             loc_by_model: {}, loc_by_language: {}, loc_by_code_language: {},
             loc_by_doc_language: {}, loc_by_feature: {}, loc_by_ide: {},
         });
@@ -750,7 +769,7 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
     const availableEnterprises = seenEnterpriseIds.map(id => {
         const eCfg = (config.enterprises || []).find(e => String(e.id) === id);
         const orgs = (eCfg?.organizations || [])
-            .map(o => ({ id: String(o.id), label: o.label || String(o.id) }))
+            .map(o => ({ id: String(o.id), label: o.label || o.slug || String(o.id) }))
             .filter(o => seenOrgIds.has(o.id));
         return { id, label: enterpriseLabelMap[id] || id, organizations: orgs };
     });
