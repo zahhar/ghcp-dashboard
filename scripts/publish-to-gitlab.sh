@@ -29,6 +29,7 @@ required_files=(
   "data/data.json"
   "data/config.json"
   "data/users.json"
+  "data/teams.json"
 )
 
 for file in "${required_files[@]}"; do
@@ -73,6 +74,7 @@ cp -R "$SOURCE_ROOT/public/." "$workdir/public/"
 cp "$SOURCE_ROOT/data/data.json" "$workdir/data/"
 cp "$SOURCE_ROOT/data/config.json" "$workdir/data/"
 cp "$SOURCE_ROOT/data/users.json" "$workdir/data/"
+cp "$SOURCE_ROOT/data/teams.json" "$workdir/data/"
 
 mkdir -p "$workdir/k8s"
 cp "$SOURCE_ROOT/k8s/deployment.yaml" "$workdir/k8s/"

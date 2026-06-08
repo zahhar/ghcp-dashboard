@@ -7,6 +7,7 @@ COPY public ./public
 COPY data/data.json ./data/data.json
 COPY data/config.json ./data/config.json
 COPY data/users.json ./data/users.json
+COPY data/teams.json ./data/teams.json
 
 EXPOSE 8080
 
