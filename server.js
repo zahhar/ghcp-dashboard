@@ -88,6 +88,8 @@ function serveStaticFile(req, res) {
 
 // Path to the JSON file mapping GitHub logins to display names, teams, and revoked status
 const USERS_FILE = path.join(DATA_ROOT, 'users.json');
+// Path to the JSON file mapping team IDs to display titles, units, and managers
+const TEAMS_FILE = path.join(DATA_ROOT, 'teams.json');
 
 let cachedParsedData = null;
 
@@ -131,6 +133,22 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
         const cfgPath = path.join(DATA_ROOT, 'config.json');
         if (fs.existsSync(cfgPath)) config = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
     } catch (e) { /* ignore — labels will fall back to raw IDs */ }
+
+    // Load team metadata (title, unit, manager) from teams.json
+    // teamMap: team id → { id, title, unit, manager }
+    const teamMap = {};
+    try {
+        if (fs.existsSync(TEAMS_FILE)) {
+            const rawTeams = JSON.parse(fs.readFileSync(TEAMS_FILE, 'utf8'));
+            if (Array.isArray(rawTeams)) {
+                for (const t of rawTeams) {
+                    if (t.id) teamMap[t.id] = t;
+                }
+            }
+        }
+    } catch (e) {
+        console.error('Failed to read teams.json:', e);
+    }
     const enterpriseLabelMap = {};
     const orgLabelMap = {};
     const enterpriseFilterKnownUsersMap = {};
@@ -581,6 +599,10 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
         const humanName = mapping.name || user.user_login;
         const isRevoked = mapping.revoked === true;
         const userTeam = mapping.team || '';
+        const userTeamInfo = teamMap[userTeam] || {};
+        const userTeamTitle = userTeamInfo.title || '';
+        const userTeamUnit = userTeamInfo.unit || '';
+        const userTeamManager = userTeamInfo.manager || '';
         const userRole = mapping.role || '';
         const userAccounts = Array.isArray(mapping.accounts) ? mapping.accounts : [user.user_login];
         const userEmails = Array.isArray(mapping.emails) ? mapping.emails.filter(Boolean) : [];
@@ -595,6 +617,9 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             human_name: humanName,
             revoked: isRevoked,
             team: userTeam,
+            team_title: userTeamTitle,
+            team_unit: userTeamUnit,
+            team_manager: userTeamManager,
             role: userRole,
             enterprise_ids: enterpriseIds,
             organization_ids: organizationIds,
@@ -724,6 +749,9 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             human_name: mapping.name || canonicalKey,
             revoked: mapping.revoked === true,
             team: mapping.team || '',
+            team_title: (teamMap[mapping.team] || {}).title || '',
+            team_unit: (teamMap[mapping.team] || {}).unit || '',
+            team_manager: (teamMap[mapping.team] || {}).manager || '',
             role: mapping.role || '',
             accounts: mapping.accounts,
             emails: Array.isArray(mapping.emails) ? mapping.emails.filter(Boolean) : [],
@@ -760,8 +788,15 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
         Object.values(userStats).flatMap(u => Object.keys(u.languages))
     )].sort();
 
-    // Collect available teams from user mapping (array format)
-    const availableTeams = [...new Set(userMapping.map(u => u.team).filter(Boolean))].sort();
+    // Collect available teams — return rich objects from teams.json, falling back to plain IDs
+    const seenTeamIds = [...new Set(userMapping.map(u => u.team).filter(Boolean))].sort();
+    const availableTeams = seenTeamIds.map(id => {
+        const t = teamMap[id];
+        return t ? { id: t.id, title: t.title, unit: t.unit } : { id, title: id, unit: '' };
+    }).sort((a, b) => {
+        if (a.unit !== b.unit) return a.unit.localeCompare(b.unit);
+        return a.title.localeCompare(b.title);
+    });
 
     // Collect enterprises and organizations seen in actual data, with nested hierarchy
     const seenEnterpriseIds = [...new Set(results.flatMap(u => u.enterprise_ids))].sort();

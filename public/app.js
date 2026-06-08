@@ -1,4 +1,5 @@
 let globalUsers = [];
+let globalTeams = {}; // team id → { id, title, unit } — populated from availableTeams response
 let globalLastDay = ''; // last active day across all users in current dataset
 let currentSortColumn = 'total_output';
 let currentSortDesc = true;
@@ -355,11 +356,23 @@ async function fetchDashboardData(month = '') {
         // Populate team dropdown if present in response and not populated yet
         const teamFilterEl = document.getElementById('team-filter');
         if (data.availableTeams && teamFilterEl.options.length <= 1) {
+            // Group teams by unit using optgroups
+            const byUnit = {};
             data.availableTeams.forEach(t => {
-                const opt = document.createElement('option');
-                opt.value = t;
-                opt.textContent = t.charAt(0).toUpperCase() + t.slice(1);
-                teamFilterEl.appendChild(opt);
+                const unit = t.unit || '';
+                if (!byUnit[unit]) byUnit[unit] = [];
+                byUnit[unit].push(t);
+            });
+            Object.keys(byUnit).sort().forEach(unit => {
+                const grp = unit ? document.createElement('optgroup') : null;
+                if (grp) grp.label = unit;
+                byUnit[unit].forEach(t => {
+                    const opt = document.createElement('option');
+                    opt.value = t.id;
+                    opt.textContent = unit ? t.title : (t.title || t.id);
+                    (grp || teamFilterEl).appendChild(opt);
+                });
+                if (grp) teamFilterEl.appendChild(grp);
             });
         }
 
@@ -398,6 +411,10 @@ async function fetchDashboardData(month = '') {
         }
 
         globalUsers = data.users || [];
+        if (Array.isArray(data.availableTeams)) {
+            globalTeams = {};
+            data.availableTeams.forEach(t => { globalTeams[t.id] = t; });
+        }
         globalLastDay = globalUsers.reduce((max, u) => (u.last_active_day > max ? u.last_active_day : max), '');
         prevMonthStats = data.prevMonthStats || null;
         prevMonthTotals = data.prevMonthTotals || null;
@@ -719,7 +736,7 @@ function renderUsersTable() {
                 <div class="user-cell" style="white-space: nowrap; flex-direction: column; align-items: flex-start; gap: 0.1rem;">
                     <span style="font-weight: 600;">${user.human_name}${revokedMark}${newUserMark}</span>
                     <span style="font-size: 0.8em; color: var(--text-muted); font-weight: 400;">${user.role || user.user_login}</span>
-                    <span style="font-size: 0.8em; color: var(--text-muted); font-weight: 400;">${user.team || ''}</span>
+                    <span style="font-size: 0.8em; color: var(--text-muted); font-weight: 400;">${user.team_title ? (user.team_unit ? user.team_unit + ' · ' + user.team_title : user.team_title) : (user.team || '')}</span>
                     ${Array.isArray(user.accounts) && user.accounts.length > 1 ? `<span style="font-size: 0.7em; color: var(--text-muted); font-weight: 400; opacity: 0.7;">🔑 ${user.accounts.length} accounts</span>` : (user.enterprise_label || user.organization_label ? `<span style="font-size: 0.75em; color: var(--text-muted); font-weight: 400; opacity: 0.8;">${[user.enterprise_label, user.organization_label].filter(Boolean).join(' · ')}</span>` : '')}
                 </div>
             </td>
@@ -825,7 +842,10 @@ function buildUserMetaSection(user, { showIdes = true } = {}) {
             .map(email => `<a href="mailto:${email}" style="color:inherit;text-decoration:underline;text-underline-offset:2px">${email}</a>`)
             .join(', ');
         const mailtoAll = `mailto:${emails.join(',')}`;
-        rows.push(`<div class="meta-row"><span class="meta-label">Emails:</span> ${emailLinks} <span style="margin-left:0.5rem"><a href="${mailtoAll}" style="color:var(--text-main);font-weight:600;text-decoration:underline;text-underline-offset:2px">Send to All</a></span></div>`);
+        const sendToAll = emails.length > 1
+            ? ` <span style="margin-left:0.5rem"><a href="${mailtoAll}" style="color:var(--text-main);font-weight:600;text-decoration:underline;text-underline-offset:2px">Send to All</a></span>`
+            : '';
+        rows.push(`<div class="meta-row"><span class="meta-label">Emails:</span> ${emailLinks}${sendToAll}</div>`);
     }
     if (user.all_languages_list && user.all_languages_list.length) {
         rows.push(`<div class="meta-row"><span class="meta-label">Languages:</span> ${user.all_languages_list.join(', ')}</div>`);
@@ -887,11 +907,26 @@ function openUserModal(user) {
     const accounts = Array.isArray(user.accounts) ? user.accounts : [user.user_login];
     const unusedPreferredAccounts = new Set(getUnusedPreferredAccounts(user));
     let showIdesInMeta = accounts.length === 1;
-    const titleParts = [user.human_name || user.user_login];
-    if (user.team) titleParts.push(user.team);
-    if (user.role) titleParts.push(user.role);
-    const titleHTML = titleParts.join('  ·  ');
-    document.getElementById('modal-title').innerHTML = titleHTML;
+    const displayName = user.human_name || user.user_login;
+    const role = user.role || '';
+    const unit = user.team_unit || '';
+    const teamTitle = user.team_title || user.team || '';
+    const manager = user.team_manager || '';
+
+    let titleText = displayName;
+    if (role) titleText += ` · ${role}`;
+
+    const teamScopeParts = [];
+    if (unit) teamScopeParts.push(unit);
+    if (teamTitle) {
+        const teamText = manager ? `${teamTitle} (👔 ${manager})` : teamTitle;
+        teamScopeParts.push(`-> ${teamText}`);
+    }
+    if (teamScopeParts.length) {
+        titleText += ` | ${teamScopeParts.join(' ')}`;
+    }
+
+    document.getElementById('modal-title').textContent = titleText;
 
     // Build chart section: if user has multiple accounts, show aggregate + per-account charts
     let chartHTML = '';
@@ -1078,7 +1113,7 @@ function initSectionToggle(toggleId, collapsibleId, chevronId) {
 // ── DAU collapse toggle ─────────────────────────────────────────────────
 (function initDAUToggle() {
     const toggle   = document.getElementById('dau-toggle');
-    const chart    = document.getElementById('dau-chart-container');
+    const chart    = document.getElementById('dau-collapsible');
     const chevron  = document.getElementById('dau-chevron');
     if (!toggle || !chart || !chevron) return;
     toggle.addEventListener('click', () => {
@@ -1119,6 +1154,20 @@ function computeTeamAggregates(users, month) {
     return { avgDauPct, avgDAU, avgTurns, avgPerf, total, activeBizDays };
 }
 
+function getMaturityStatusColor(status) {
+    if (status === 'green') return '#4ade80';
+    if (status === 'amber') return '#fbbf24';
+    if (status === 'red') return '#f87171';
+    return 'var(--text-muted)';
+}
+
+function getDauMetricStatuses(avgDauPct, avgTurns, avgPerf, totalUsers, activeUsersCount) {
+    const dauStatus = avgDauPct == null ? 'gray' : (avgDauPct >= 70 ? 'green' : (avgDauPct >= 40 ? 'amber' : 'red'));
+    const turnsStatus = totalUsers > 0 ? (avgTurns >= 100 ? 'green' : (avgTurns >= 50 ? 'amber' : 'red')) : 'gray';
+    const perfStatus = activeUsersCount > 0 ? (avgPerf >= 100 ? 'green' : (avgPerf >= 50 ? 'amber' : 'red')) : 'gray';
+    return { dauStatus, turnsStatus, perfStatus };
+}
+
 function renderDAUChart() {
     const container = document.getElementById('dau-chart-container');
     if (!container) return;
@@ -1128,6 +1177,11 @@ function renderDAUChart() {
     const avgStat = document.getElementById('dau-avg-stat');
     if (avgStat) {
         const { avgDauPct: pct, avgDAU, avgTurns, avgPerf, activeBizDays } = computeTeamAggregates(filteredUsers, currentMonthFilter);
+        const activeUsersCount = filteredUsers.filter(u => (u.active_days_count || 0) > 0).length;
+        const { dauStatus, turnsStatus, perfStatus } = getDauMetricStatuses(pct, avgTurns, avgPerf, filteredUsers.length, activeUsersCount);
+        const dauColor = getMaturityStatusColor(dauStatus);
+        const turnsColor = getMaturityStatusColor(turnsStatus);
+        const perfColor = getMaturityStatusColor(perfStatus);
         const avgDAUDisplay = Number(avgDAU).toFixed(1);
         if (activeBizDays.length) {
             // prev-month equivalents (only available when a month is selected)
@@ -1153,19 +1207,19 @@ function renderDAUChart() {
                 <div style="display:flex;gap:1.5rem;align-items:flex-start">
                     <div style="text-align:right">
                         <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-bottom:2px">Avg DAU</div>
-                        <div style="font-size:1rem;color:var(--text-main);font-weight:600;line-height:1;white-space:nowrap">${avgDAUDisplay}</div>
+                        <div style="font-size:1rem;color:${dauColor};font-weight:600;line-height:1;white-space:nowrap">${avgDAUDisplay}</div>
                         <div style="font-size:0.75rem;color:var(--text-muted);margin-top:1px;white-space:nowrap">${pct}% ${diffBadge(pct, prevPct, true)}</div>
                     </div>
                     <div style="width:1px;background:rgba(255,255,255,0.1);align-self:stretch"></div>
                     <div style="text-align:right">
                         <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-bottom:2px">Avg Turns</div>
-                        <div style="font-size:1rem;color:var(--fame-color);font-weight:600;line-height:1;white-space:nowrap">${formatNumber(avgTurns)} ${diffBadge(avgTurns, prevAvgTurns, true)}</div>
+                        <div style="font-size:1rem;color:${turnsColor};font-weight:600;line-height:1;white-space:nowrap">${formatNumber(avgTurns)} ${diffBadge(avgTurns, prevAvgTurns, true)}</div>
                         <div style="font-size:0.75rem;color:var(--text-muted);margin-top:1px">per user</div>
                     </div>
                     <div style="width:1px;background:rgba(255,255,255,0.1);align-self:stretch"></div>
                     <div style="text-align:right">
                         <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-bottom:2px">Avg Perf</div>
-                        <div style="font-size:1rem;color:var(--text-main);font-weight:600;line-height:1;white-space:nowrap">${formatNumber(avgPerf)} ${diffBadge(avgPerf, prevAvgPerf, true)}</div>
+                        <div style="font-size:1rem;color:${perfColor};font-weight:600;line-height:1;white-space:nowrap">${formatNumber(avgPerf)} ${diffBadge(avgPerf, prevAvgPerf, true)}</div>
                         <div style="font-size:0.75rem;color:var(--text-muted);margin-top:1px">LOC / user / day</div>
                     </div>
                 </div>`;

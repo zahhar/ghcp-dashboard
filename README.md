@@ -49,6 +49,7 @@ Project was intentionally built simple and file-based, so you can run it locally
 - `debug.js` — downloads hisotrical data to `data/debug/*.json`and compares it with local `data/data.json`
 - `data/config.json` — stores enterprises and organizations with their slugs, token variable names, and last-sync state
 - `data/users.json` — UserId mapping to Display name, Team, Role, Revoked status (all optional)
+- `data/teams.json` — team ID mapping to display title, business unit, and manager name
 - `data/data.json` — all your data used to build a dashboard
 - `data/raw/inbox/` — drop your own NDJSON files here for ingest
 - `data/raw/processed/` — files are moved here automatically after successful ingest
@@ -135,6 +136,27 @@ Open `http://localhost:3000` - you should see mocked data loaded.
     - `emails` is optional; values are displayed and can be used for account cleanup workflows.
     - Account logins should be lowercase for reliable matching.
 
+6. (optionally) Edit `data/teams.json` to provide human-readable titles, business units, and manager names for each team referenced in `users.json`.
+
+    Current schema is an **array**:
+    ```json
+    [
+       {
+          "id": "my_team_id",
+          "title": "My Team",
+          "unit": "Business Unit",
+          "manager": "Jane Smith"
+       }
+    ]
+    ```
+
+    Notes:
+    - `id` must match the `team` field value used in `users.json`.
+    - `title` is shown in the team filter dropdown, table rows, and user detail popup.
+    - `unit` is used to group teams in the dropdown (optgroups) and displayed alongside the title.
+    - `manager` is stored but not currently rendered in the UI (reserved for future use).
+    - Teams missing from `teams.json` fall back to displaying their raw ID.
+
 ### 4) Pull/update metrics data
 
 ```bash
@@ -162,6 +184,7 @@ flowchart LR
 	L --> D
 	L --> M[data/raw/processed/\narchived after ingest]
 	F[data/users.json\nuser/team mapping] --> G[server.js]
+	N[data/teams.json\nteam titles & units] --> G
 	D --> G[server.js]
 	E --> G
 	H[public/* UI] --> G

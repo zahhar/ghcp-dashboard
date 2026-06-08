@@ -43,8 +43,6 @@ body {
     justify-content: space-between;
     align-items: center;
     margin-bottom: 3rem;
-    padding-bottom: 2rem;
-    border-bottom: 1px solid var(--border-color);
     animation: fadeInDown 0.8s ease;
 }
 
@@ -726,6 +724,40 @@ body {
     color: rgba(255, 255, 255, 0.7);
     white-space: nowrap;
     pointer-events: none;
+}
+
+.dau-footnote {
+    margin-top: 0.9rem;
+    padding: 0.65rem 0.8rem 0.65rem 0.9rem;
+    border-left: 2px solid rgba(148, 163, 184, 0.35);
+    background: rgba(15, 23, 42, 0.2);
+    border-radius: 8px;
+}
+
+.dau-footnote-title {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.35rem;
+}
+
+.dau-footnote ul {
+    margin: 0;
+    padding-left: 1rem;
+    display: grid;
+    gap: 0.22rem;
+}
+
+.dau-footnote li {
+    color: rgba(226, 232, 240, 0.78);
+    font-size: 0.76rem;
+    line-height: 1.38;
+}
+
+.dau-footnote strong {
+    color: rgba(248, 250, 252, 0.92);
+    font-weight: 600;
 }
 
 .user-meta-section {

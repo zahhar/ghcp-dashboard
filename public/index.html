@@ -21,17 +21,17 @@
                 <p class="subtitle" style="margin-left: 5.75rem;">Insights into AI adoption</p>
             </div>
             <div class="header-stats">
-                <div class="stat-box gradient-purple">
+                <div class="stat-box">
                     <span class="stat-label">Total Users</span>
                     <span class="stat-value" id="stat-total-users">--</span>
                     <span class="stat-diff" id="stat-diff-users"></span>
                 </div>
-                <div class="stat-box gradient-blue">
+                <div class="stat-box">
                     <span class="stat-label">Total Turns</span>
-                    <span class="stat-value metric-high" id="stat-total-interactions">--</span>
+                    <span class="stat-value" id="stat-total-interactions">--</span>
                     <span class="stat-diff" id="stat-diff-interactions"></span>
                 </div>
-                <div class="stat-box glass" style="border-color: rgba(16, 185, 129, 0.3)">
+                <div class="stat-box">
                     <span class="stat-label">Total Output</span>
                     <span class="stat-value" id="stat-total-loc">--</span>
                     <span class="stat-diff" id="stat-diff-loc"></span>
@@ -49,7 +49,17 @@
                     </div>
                     <div id="dau-avg-stat" style="text-align:right;line-height:1.3"></div>
                 </div>
-                <div id="dau-chart-container" class="dau-collapsible"></div>
+                <div id="dau-collapsible" class="dau-collapsible">
+                    <div id="dau-chart-container"></div>
+                    <div class="dau-footnote" aria-label="DAU disclaimer">
+                        <p class="dau-footnote-title">DISCLAIMER</p>
+                        <ul>
+                            <li>Vacations, national holidays, and sick leaves are <strong>not</strong> excluded; timezone difference may appear as weekend usage.</li>
+                            <li>Data is not real-time (gaps/delays up to 3 calendar days may happen); source is official GitHub Copilot API only, custom telemetry is not captured.</li>
+                            <li>If data seems incorrect, verify users are signed into IDE/CLI with the GitHub account tied to the license (not a personal account), ensure IDE telemetry is enabled, then wait 24h for data to appear.</li>
+                        </ul>
+                    </div>
+                </div>
             </section>
             <!-- All Users -->
             <section class="card glass">

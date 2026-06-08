@@ -1,0 +1,4 @@
+[
+    { "id": "alpha", "title": "Alpha",  "unit": "Sample", "manager": "John Doe" },
+    { "id": "beta",  "title": "Beta",   "unit": "Sample", "manager": "Jane Doe" }
+]
