@@ -792,7 +792,9 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
     const seenTeamIds = [...new Set(userMapping.map(u => u.team).filter(Boolean))].sort();
     const availableTeams = seenTeamIds.map(id => {
         const t = teamMap[id];
-        return t ? { id: t.id, title: t.title, unit: t.unit } : { id, title: id, unit: '' };
+        return t
+            ? { id: t.id, title: t.title, unit: t.unit, manager: t.manager || '' }
+            : { id, title: id, unit: '', manager: '' };
     }).sort((a, b) => {
         if (a.unit !== b.unit) return a.unit.localeCompare(b.unit);
         return a.title.localeCompare(b.title);

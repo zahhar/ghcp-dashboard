@@ -909,9 +909,10 @@ function openUserModal(user) {
     let showIdesInMeta = accounts.length === 1;
     const displayName = user.human_name || user.user_login;
     const role = user.role || '';
-    const unit = user.team_unit || '';
-    const teamTitle = user.team_title || user.team || '';
-    const manager = user.team_manager || '';
+    const teamInfo = user.team ? (globalTeams[user.team] || null) : null;
+    const unit = user.team_unit || (teamInfo ? teamInfo.unit : '') || '';
+    const teamTitle = user.team_title || (teamInfo ? teamInfo.title : '') || user.team || '';
+    const manager = user.team_manager || (teamInfo ? teamInfo.manager : '') || '';
 
     let titleText = displayName;
     if (role) titleText += ` · ${role}`;
