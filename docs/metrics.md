@@ -22,6 +22,7 @@ A guide to every number, chart, and column in the GitHub Copilot Dashboard.
    - [Last Active](#last-active)
 5. [Output breakdown donuts](#5-output-breakdown-donuts)
    - [by Model](#by-model)
+   - [By Model class](#by-model-class)
    - [by Feature](#by-feature)
    - [by IDE](#by-ide)
    - [by Activity](#by-activity)
@@ -51,7 +52,7 @@ A guide to every number, chart, and column in the GitHub Copilot Dashboard.
 - **Coding** — changes in programming language files (JavaScript, Python, Java, etc.).  
 - **Steering** — changes in documentation or prompt files. Full list: `'markdown', 'text', 'prompt', 'instructions', 'mermaid', 'plaintext', 'bibtex', 'snippets', 'latex', 'restructuredtext', 'search-result', 'skill', 'tex', 'chatagent'`; These files are used to guide GHCP's behaviour rather than produce code directly.
 
-**Turns** — one interaction event. Includes a chat message typed by the user ("Chat ask") or user response (confirmation) given to an Agent. A single coding session typically generates multiple turns.
+**Turns** — sum of user chat interactions and CLI requests. Formula: `user_initiated_interaction_count + totals_by_cli.request_count`. Tracks engagement intensity and frequency of AI tool usage.
 
 ---
 
@@ -118,9 +119,9 @@ The broadest measure of a user's GHCP volume for the period.
 
 | Line | Value | Meaning |
 |---|---|---|
-| **Main** | Total turns | `user_initiated + code_generation` — total interactions with GHCP. |
-| 🏃 2nd line | LOC per turn | `(Suggested + Applied LOC) / Turns` — average output volume per interaction. Higher = larger changes applied. |
-| 🎯 3rd line | Acceptance rate | `code_acceptance_activity / code_generation_activity` — share of generated completions that the user accepted. SIgnore it: seems telemetry does not capture it well, or we have a bug in the calculation. |
+| **Main** | Total turns | `user_initiated_interaction_count + cli_request_count` — sum of user-initiated chat interactions and CLI requests. |
+| 🏃 2nd line | Code generation activity | `code_generation_activity_count` — count of automatic code generation events. |
+| 🎯 3rd line | Code acceptance activity | `code_acceptance_activity_count` — count of code completions the user accepted. |
 
 A month-over-month delta badge on the main number shows trend direction.
 
@@ -128,13 +129,18 @@ A month-over-month delta badge on the main number shows trend direction.
 
 ### Steering
 
-Total LOC changed by this user in **document and prompt files** (Markdown, plain text, `.prompt`, `.instructions`, Mermaid, LaTeX, and similar).
+Total **Steering Output** for this user in **document and prompt files** (Markdown, plain text, `.prompt`, `.instructions`, Mermaid, LaTeX, and similar).
+
+**Formula:** `steering_output = steering_suggested + steering_applied`
+
+- `steering_suggested = Σ(loc_suggested_to_add + loc_suggested_to_delete)` for documentation/prompt languages
+- `steering_applied = Σ(loc_added + loc_deleted)` for documentation/prompt languages
 
 | Line | Value |
 |---|---|
-| **Main** | Total steering LOC (added + deleted) |
-| 2ns line | `+` added lines |
-| 3rd line | `−` deleted lines |
+| **Main** | Total steering output LOC |
+| 2nd line | 💡 suggested steering LOC |
+| 3rd line | ✏️ applied steering LOC |
 
 Hover over the cell to see which document types were involved.
 
@@ -144,13 +150,18 @@ Hover over the cell to see which document types were involved.
 
 ### Coding
 
-Total LOC changed by this user in **programming language files**. This is the "pure code output" measure.
+Total **Coding Output** for this user in **programming language files**.
+
+**Formula:** `coding_output = coding_suggested + coding_applied`
+
+- `coding_suggested = Σ(loc_suggested_to_add + loc_suggested_to_delete)` for programming languages
+- `coding_applied = Σ(loc_added + loc_deleted)` for programming languages
 
 | Line | Value |
 |---|---|
-| **Main** | Total code LOC (added + deleted) |
-| 2nd line | `+` added lines |
-| 3rd line | `−` deleted lines |
+| **Main** | Total coding output LOC |
+| 2nd line | 💡 suggested coding LOC |
+| 3rd line | ✏️ applied coding LOC |
 
 The month-over-month percentage badge shows whether the user's code output is growing or shrinking.
 
@@ -160,9 +171,15 @@ The month-over-month percentage badge shows whether the user's code output is gr
 
 A daily throughput score that normalises output for users who were only active part of the period.
 
-**Formula:** `max(code_loc_added, code_loc_deleted) / active_days`
+**Formula:** `PERF = total_output / active_days`
 
-Using `max` rather than sum means a refactoring session (high deletes) counts equally to a feature sprint (high adds). Hover the cell for the raw value.
+Where:
+
+- `total_output = suggested_loc + applied_loc`
+- `suggested_loc = loc_suggested_to_add + loc_suggested_to_delete`
+- `applied_loc = loc_added + loc_deleted`
+
+Hover the cell for the raw value.
 
 🔑 Sort by this column to find the most consistently productive users regardless of how many days they were active.
 
@@ -222,7 +239,19 @@ All six donuts reflect the **currently filtered user set** (team filter and mont
 
 ### by Model
 
-Share of **code LOC** generated by each AI model (`gpt-4o`, `claude-3.5-sonnet`, etc.). Document/steering LOC is excluded so the chart reflects pure coding model usage.
+Share of **all output LOC** generated by each AI model (`gpt-4o`, `claude-3.5-sonnet`, etc.), including both suggested and applied output.
+
+---
+
+### By Model class
+
+Uses the same model-output source as **by Model**, but groups models into three buckets:
+
+- **expensive models** — combined output from all models listed under `config.watch_model_use.expensive`
+- **weak models** — combined output from all models listed under `config.watch_model_use.weak`
+- **regular models** — combined output from every other model not listed in `config.watch_model_use`
+
+The watched-model configuration may be grouped in `config.json`, but the dashboard still flattens all configured models into one consolidated watch list anywhere the legacy list behavior is expected.
 
 ---
 
@@ -246,13 +275,13 @@ A binary split of total LOC into **Coding** vs **Steering**. Gives an at-a-glanc
 
 ### Coding by Language
 
-Share of **code LOC** broken down by programming language. Document/prompt languages are excluded.
+Share of **coding output LOC** (suggested + applied) broken down by programming language. Document/prompt languages are excluded.
 
 ---
 
 ### Steering by Syntax
 
-Share of **steering LOC** broken down by document type (Markdown, plain text, `.prompt`, `.instructions`, LaTeX, etc.).
+Share of **steering output LOC** (suggested + applied) broken down by document type (Markdown, plain text, `.prompt`, `.instructions`, LaTeX, etc.).
 
 ---
 
@@ -278,7 +307,7 @@ The **AI Maturity** block evaluates the currently filtered team (same filters as
 | **Avg Turns** | `avgTurns = total turns / non-revoked users`. | `>= 100` turns/user/month | `50–99` | `< 50` | no users |
 | **Avg Perf** | `avgPerf = average(perf_score)` over active non-revoked users. | `>= 100` LOC/user/day | `50–99` | `< 50` | no active users |
 | **Perf Consistency** | Compare current vs previous month for comparable users (non-revoked, active, with previous `perf_score > 0`): `dropPct = (prev-curr)/prev`. | no drop `> 50%` | max drop `> 50%` and `< 100%` | any drop `>= 100%` (to zero) | no comparable previous-period data |
-| **Optimal Model Use** | Active users are compliant when normalized `favorite_model` is **not** in `config.watch_model_use`. | all compliant | some compliant | none compliant | no watch list configured |
+| **Optimal Model Use** | Active users are compliant when normalized `favorite_model` is **not** in the flattened watch list derived from `config.watch_model_use` (all configured groups combined). | all compliant | some compliant | none compliant | no watch list configured |
 | **Licence Use** | Uses account-level attribution and preferred enterprise IDs (`preferred_license: true`). | all users active, single-account, and each account belongs to preferred enterprise | license setup non-ideal (mixed enterprises and/or multi-account) | immediate red if any preferred-enterprise account exists but has no usage in selected period; also red if any `never_active` user | no users |
 
 > Notes:

@@ -7,11 +7,14 @@ let currentTeamFilter = '';
 let currentScopeFilter = ''; // 'e:ID' = enterprise, 'o:ID' = organization
 let currentSearchQuery = '';
 let currentStatusFilter = 'active';
-let currentPhaseFilter = '';
+let currentManagerFilter = '';
 let prevMonthStats = null;
 let prevMonthTotals = null;
 let watchModelUse = []; // model names from config.watch_model_use
+let watchModelUseGroups = {}; // grouped model names from config.watch_model_use
 let globalPreferredEnterpriseIds = []; // enterprise IDs with preferred_license: true in config.json
+
+let globalManagers = []; // distinct manager names from teams data
 
 const PHASE_LABELS = {
     0: '0: No cohort',
@@ -26,6 +29,36 @@ const PHASE_DESCRIPTIONS = {
     2: 'Phase 2 — Agent first: Engaged with a single GitHub-based agent surface — Copilot cloud agent, code review, or CLI (at least 2 days)',
     3: 'Phase 3 — Multi-agent: Engaged with two or more GitHub-based agent surfaces, or with the new GitHub Copilot app'
 };
+
+function normalizeWatchModelUseConfig(raw) {
+    const flat = [];
+    const groups = {};
+    const seen = new Set();
+
+    const addModel = (model) => {
+        const value = String(model || '').trim();
+        if (!value || seen.has(value)) return;
+        seen.add(value);
+        flat.push(value);
+    };
+
+    if (Array.isArray(raw)) {
+        raw.forEach(addModel);
+    } else if (raw && typeof raw === 'object') {
+        for (const [groupName, models] of Object.entries(raw)) {
+            if (!Array.isArray(models)) continue;
+            groups[groupName] = [];
+            for (const model of models) {
+                const value = String(model || '').trim();
+                if (!value) continue;
+                groups[groupName].push(value);
+                addModel(value);
+            }
+        }
+    }
+
+    return { flat, groups };
+}
 
 // Show 🚀 instead of a numeric % badge when positive growth exceeds this threshold (%)
 const ROCKET_THRESHOLD = 200;
@@ -147,7 +180,7 @@ function parseStateFromUrl() {
         scope: url.searchParams.get('scope') || '',
         search: url.searchParams.get('q') || '',
         status: url.searchParams.get('status') || DEFAULT_STATUS_FILTER,
-        phase: url.searchParams.get('phase') || '',
+        manager: url.searchParams.get('manager') || '',
         sort: url.searchParams.get('sort') || DEFAULT_SORT_COLUMN,
         desc
     });
@@ -159,7 +192,7 @@ function applyStateToGlobals(state) {
     currentScopeFilter = state.scope;
     currentSearchQuery = state.search;
     currentStatusFilter = state.status || DEFAULT_STATUS_FILTER;
-    currentPhaseFilter = state.phase;
+    currentManagerFilter = state.manager;
     currentSortColumn = state.sort;
     currentSortDesc = state.desc;
 }
@@ -171,8 +204,8 @@ function syncControlsFromState() {
     const statusEl = document.getElementById('status-filter');
     if (statusEl) statusEl.value = currentStatusFilter;
 
-    const phaseEl = document.getElementById('phase-filter');
-    if (phaseEl) phaseEl.value = currentPhaseFilter;
+    const managerEl = document.getElementById('manager-filter');
+    if (managerEl) managerEl.value = currentManagerFilter;
 }
 
 function normalizeDynamicFilterSelections() {
@@ -224,7 +257,7 @@ function updateUrlFromCurrentState() {
     if (currentScopeFilter) params.set('scope', currentScopeFilter);
     if (currentSearchQuery) params.set('q', currentSearchQuery);
     if (currentStatusFilter !== DEFAULT_STATUS_FILTER) params.set('status', currentStatusFilter);
-    if (currentPhaseFilter !== '') params.set('phase', currentPhaseFilter);
+    if (currentManagerFilter !== '') params.set('manager', currentManagerFilter);
     if (currentSortColumn !== DEFAULT_SORT_COLUMN) params.set('sort', currentSortColumn);
     if (currentSortDesc !== DEFAULT_SORT_DESC) params.set('desc', currentSortDesc ? '1' : '0');
 
@@ -255,9 +288,8 @@ function formatTokens(n) {
 }
 
 // sign: +1 for added (show +N), -1 for deleted (show -N); zero is always unsigned
-function signedLoc(n, sign) {
-    if (!n) return '0';
-    return (sign < 0 ? '-' : '+') + formatNumber(n);
+function formatLocPair(label, value) {
+    return `${label} ${formatNumber(value || 0)}`;
 }
 
 let currentMonthFilter = '';
@@ -294,8 +326,8 @@ document.addEventListener('DOMContentLoaded', () => {
         renderUsersTable();
     });
 
-    document.getElementById('phase-filter').addEventListener('change', (e) => {
-        currentPhaseFilter = e.target.value;
+    document.getElementById('manager-filter').addEventListener('change', (e) => {
+        currentManagerFilter = e.target.value;
         updateUrlFromCurrentState();
         renderUsersTable();
     });
@@ -376,6 +408,23 @@ async function fetchDashboardData(month = '') {
             });
         }
 
+        // Populate manager dropdown from teams data
+        const managerFilterEl = document.getElementById('manager-filter');
+        if (data.availableTeams && managerFilterEl.options.length <= 1) {
+            const managers = [...new Set(
+                data.availableTeams
+                    .map(t => t.manager)
+                    .filter(m => m && m.trim() !== '')
+            )].sort((a, b) => a.localeCompare(b));
+            managers.forEach(manager => {
+                const opt = document.createElement('option');
+                opt.value = manager;
+                opt.textContent = manager;
+                managerFilterEl.appendChild(opt);
+            });
+            globalManagers = managers;
+        }
+
         // Populate scope (enterprise → organization hierarchy) dropdown
         const scopeFilterEl = document.getElementById('scope-filter');
         if (data.availableEnterprises && scopeFilterEl.options.length <= 1) {
@@ -418,7 +467,14 @@ async function fetchDashboardData(month = '') {
         globalLastDay = globalUsers.reduce((max, u) => (u.last_active_day > max ? u.last_active_day : max), '');
         prevMonthStats = data.prevMonthStats || null;
         prevMonthTotals = data.prevMonthTotals || null;
-        if (Array.isArray(data.watchModelUse)) watchModelUse = data.watchModelUse;
+        if (data.watchModelUse !== undefined) {
+            const normalized = normalizeWatchModelUseConfig(data.watchModelUse);
+            watchModelUse = normalized.flat;
+            watchModelUseGroups = normalized.groups;
+        }
+        if (data.watchModelUseGroups && typeof data.watchModelUseGroups === 'object') {
+            watchModelUseGroups = data.watchModelUseGroups;
+        }
         if (Array.isArray(data.preferredEnterpriseIds)) globalPreferredEnterpriseIds = data.preferredEnterpriseIds;
 
         // Render Tables
@@ -656,10 +712,9 @@ function renderUsersTable() {
         sortedUsers = sortedUsers.filter(u => matchesSearch(u, currentSearchQuery));
     }
 
-    // Apply phase filter
-    if (currentPhaseFilter !== '') {
-        const pn = parseInt(currentPhaseFilter, 10);
-        sortedUsers = sortedUsers.filter(u => u.ai_adoption_phase_number === pn);
+    // Apply manager filter
+    if (currentManagerFilter !== '') {
+        sortedUsers = sortedUsers.filter(u => u.team_manager === currentManagerFilter);
     }
 
     // Update header stats to reflect current filter
@@ -713,7 +768,9 @@ function renderUsersTable() {
     sortedUsers.forEach((user, idx) => {
         const lineNumber = idx + 1;
         const tr = document.createElement('tr');
-        const prev = prevMonthStats ? prevMonthStats[user.user_login] : null;
+        const prevRaw = prevMonthStats ? prevMonthStats[user.user_login] : null;
+        // Never-active users show no diff badges; only the "new" label is allowed (handled separately below)
+        const prev = user.never_active ? null : prevRaw;
 
         if (user.revoked) {
             tr.classList.add('revoked-user');
@@ -723,7 +780,7 @@ function renderUsersTable() {
         }
 
         const revokedMark = user.revoked ? ' <span style="font-size: 0.9em;">❌</span>' : '';
-        const newUserMark = (prevMonthStats && !prev) ? ' <span class="diff-badge diff-new">new</span>' : '';
+        const newUserMark = (prevMonthStats && !prevRaw) ? ' <span class="diff-badge diff-new">new</span>' : '';
 
         // Keep user_login hidden in anonymized mode, but preserve the original rendering for easy restore.
         // <span style="font-size: 0.8em; color: var(--text-muted); font-weight: 400;">${user.team ? user.team + ' | ' : ''}${user.user_login}</span>
@@ -749,32 +806,32 @@ function renderUsersTable() {
                 <span style="font-size:0.8em;color:var(--text-muted)">✏️ ${formatNumber(user.total_loc_changed)}</span>
                 ${formatTokens(user.cli_output_tokens_sum) ? `<br><span style="font-size:0.8em;color:var(--text-muted)">🔤 ${formatTokens(user.cli_output_tokens_sum)}</span>` : ''}
             </td>
-            <!-- Turns: total interactions | 🏃 output LOC per turn | 🎯 acceptance rate -->
-            <td title="Total interaction turns&#10;🏃 Output LOC per turn (suggested + applied)&#10;🎯 Acceptance Rate: code_acceptance_activity / code_generation_activity">
+            <!-- Turns: total interactions | 🏃 code generation activity count | 🎯 code acceptance activity count -->
+            <td title="Total interaction turns (user_initiated + cli_requests)&#10;🏃 Code generation activity count&#10;🎯 Code acceptance activity count">
                 <span class="metric-high" style="font-size: 1.1em;">${formatNumber(user.turns)}</span>
                 ${prev ? diffBadge(user.turns, prev.turns, true) : ''}
                 <br>
-                <span style="font-size:0.8em;color:var(--text-muted)">${user.turns > 0 ? '🏃\u202f' + formatNumber(Math.round((user.total_suggested_changed + user.total_loc_changed) / user.turns)) : '🏃 —'}</span>
+                <span style="font-size:0.8em;color:var(--text-muted)">🏃\u202f${formatNumber(user.code_generation_activity_count)}</span>
                 <br>
-                <span style="font-size:0.8em;color:var(--text-muted)">🎯 ${user.acceptance_rate}</span>
+                <span style="font-size:0.8em;color:var(--text-muted)">🎯 ${formatNumber(user.code_acceptance_activity_count)}</span>
             </td>
-            <td style="white-space: nowrap;" title="${user.all_doc_languages_list && user.all_doc_languages_list.length ? 'Doc languages: ' + user.all_doc_languages_list.join(', ') : ''}">
+            <td style="white-space: nowrap;" title="Steering Output = Steering Suggested + Steering Applied&#10;Steering Suggested = Σ(loc_suggested_to_add + loc_suggested_to_delete) for documentation/prompt languages&#10;Steering Applied = Σ(loc_added + loc_deleted) for documentation/prompt languages${user.all_doc_languages_list && user.all_doc_languages_list.length ? '&#10;Doc languages: ' + user.all_doc_languages_list.join(', ') : ''}">
                 ${formatNumber(user.doc_loc_changed)}
                 ${prev ? diffArrowOnly(user.doc_loc_changed, prev.doc_loc_changed) : ''}
                 <br>
-                <span style="font-size:0.8em;color:var(--text-muted)">${signedLoc(user.doc_loc_added, 1)}</span>
+                <span style="font-size:0.8em;color:var(--text-muted)">${formatLocPair('💡', user.doc_loc_suggested)}</span>
                 <br>
-                <span style="font-size:0.8em;color:var(--text-muted)">${signedLoc(user.doc_loc_deleted, -1)}</span>
+                <span style="font-size:0.8em;color:var(--text-muted)">${formatLocPair('✏️', user.doc_loc_applied)}</span>
             </td>
-            <td style="white-space: nowrap;">
+            <td style="white-space: nowrap;" title="Coding Output = Coding Suggested + Coding Applied&#10;Coding Suggested = Σ(loc_suggested_to_add + loc_suggested_to_delete) for programming languages&#10;Coding Applied = Σ(loc_added + loc_deleted) for programming languages">
                 ${formatNumber(user.code_loc_changed)}
                 ${prev ? diffBadge(user.code_loc_changed, prev.code_loc_changed) : ''}
                 <br>
-                <span style="font-size:0.8em;color:var(--text-muted)">${signedLoc(user.code_loc_added, 1)}</span>
+                <span style="font-size:0.8em;color:var(--text-muted)">${formatLocPair('💡', user.code_loc_suggested)}</span>
                 <br>
-                <span style="font-size:0.8em;color:var(--text-muted)">${signedLoc(user.code_loc_deleted, -1)}</span>
+                <span style="font-size:0.8em;color:var(--text-muted)">${formatLocPair('✏️', user.code_loc_applied)}</span>
             </td>
-            <td style="white-space: nowrap;" title="PERF = max(code added, code deleted) / active days&#10;${formatNumber(user.perf_score)} loc/day">
+            <td style="white-space: nowrap;" title="PERF = Total Output / active days&#10;Total Output = Suggested LOC + Applied LOC&#10;Suggested LOC = loc_suggested_to_add + loc_suggested_to_delete&#10;Applied LOC = loc_added + loc_deleted&#10;${formatNumber(user.perf_score)} loc/day">
                 <span>${formatNumber(user.perf_score)}</span>
                 ${prev ? diffBadge(user.perf_score, prev.perf_score, true) : ''}
 ${(() => { const pn = user.ai_adoption_phase_number ?? 0; const prevPn = prev ? (prev.ai_adoption_phase_number ?? null) : null; const changed = prevPn !== null && prevPn !== pn; return `<br><span style="font-size:0.75em;color:var(--text-muted);cursor:help" title="${PHASE_DESCRIPTIONS[pn] || ''}">${PHASE_LABELS[pn] || ('Phase ' + pn)}${changed ? ' ' + (pn > prevPn ? '<span class="diff-badge diff-up">▲</span>' : '<span class="diff-badge diff-down">▼</span>') : ''}</span>`; })()}
@@ -807,9 +864,6 @@ ${(() => { const pn = user.ai_adoption_phase_number ?? 0; const prevPn = prev ? 
         // micro-animation for table rows
         tr.style.opacity = '0';
         tr.style.transform = 'translateX(-10px)';
-        // Fast animation to not be annoying for large lists
-        tr.style.transition = `opacity 0.2s ease, transform 0.2s ease`;
-
         // add brief delay only on initial load to avoid jank on sorting
         if (idx < TABLE_ANIM_ROW_LIMIT) {
             tr.style.transitionDelay = `${Math.min(idx * TABLE_ANIM_DELAY_STEP, TABLE_ANIM_DELAY_MAX)}s`;
@@ -1125,9 +1179,10 @@ function initSectionToggle(toggleId, collapsibleId, chevronId) {
 })();
 
 // ── Users table + Output Breakdown collapse toggles ─────────────────────
-initSectionToggle('users-toggle',     'users-table-collapsible', 'users-chevron');
-initSectionToggle('maturity-toggle',  'maturity-collapsible',    'maturity-chevron');
-initSectionToggle('breakdown-toggle', 'breakdown-collapsible',   'breakdown-chevron');
+initSectionToggle('users-toggle',          'users-table-collapsible',    'users-chevron');
+    initSectionToggle('maturity-toggle',       'maturity-collapsible',       'maturity-chevron');
+    initSectionToggle('breakdown-toggle',      'breakdown-collapsible',      'breakdown-chevron');
+    initSectionToggle('watched-models-toggle', 'watched-models-collapsible', 'watched-models-chevron');
 
 // ── Shared aggregate computation ───────────────────────────────────────────
 // Used by both renderDAUChart (header stats) and renderMaturitySection (ctx).
@@ -1163,9 +1218,10 @@ function getMaturityStatusColor(status) {
 }
 
 function getDauMetricStatuses(avgDauPct, avgTurns, avgPerf, totalUsers, activeUsersCount) {
-    const dauStatus = avgDauPct == null ? 'gray' : (avgDauPct >= 70 ? 'green' : (avgDauPct >= 40 ? 'amber' : 'red'));
-    const turnsStatus = totalUsers > 0 ? (avgTurns >= 100 ? 'green' : (avgTurns >= 50 ? 'amber' : 'red')) : 'gray';
-    const perfStatus = activeUsersCount > 0 ? (avgPerf >= 100 ? 'green' : (avgPerf >= 50 ? 'amber' : 'red')) : 'gray';
+    // Single source of truth: thresholds from maturity-rules.js MATURITY_THRESHOLDS
+    const dauStatus = avgDauPct == null ? 'gray' : (avgDauPct >= MATURITY_THRESHOLDS.dau.green ? 'green' : (avgDauPct >= MATURITY_THRESHOLDS.dau.amber ? 'amber' : 'red'));
+    const turnsStatus = totalUsers > 0 ? (avgTurns >= MATURITY_THRESHOLDS.avg_turns.green ? 'green' : (avgTurns >= MATURITY_THRESHOLDS.avg_turns.amber ? 'amber' : 'red')) : 'gray';
+    const perfStatus = activeUsersCount > 0 ? (avgPerf >= MATURITY_THRESHOLDS.avg_perf.green ? 'green' : (avgPerf >= MATURITY_THRESHOLDS.avg_perf.amber ? 'amber' : 'red')) : 'gray';
     return { dauStatus, turnsStatus, perfStatus };
 }
 
@@ -1259,7 +1315,7 @@ function buildCombinedChart(daily, month, opts = {}) {
         const label = parts[2] + '.' + parts[1];
         const dowStyle = d.isWeekend ? 'color:rgba(239,68,68,0.5)' : '';
 
-        const locTitle = `LOC: ${formatNumber(totalLoc)} (Code: ${formatNumber(codeLoc)}, Doc: ${formatNumber(docLoc)})`;
+        const locTitle = `Output LOC: ${formatNumber(totalLoc)} (Coding: ${formatNumber(codeLoc)}, Steering: ${formatNumber(docLoc)})`;
         const turnsTitle = `Turns: ${turnsTotal} (Chat asks: ${d.user_initiated||0}, Agent/CodeGen: ${d.code_generation||0}, CLI: ${cliTurns})`;
         const totalLabel = turnsTotal > 0 ? `<span class="bar-turns-total">${turnsTotal}</span>` : '';
 
@@ -1284,7 +1340,7 @@ function buildCombinedChart(daily, month, opts = {}) {
             <span><span class="legend-dot" style="background:#818cf8"></span>Chat asks</span>
             <span><span class="legend-dot" style="background:#38bdf8"></span>Agent/CodeGen</span>
             <span><span class="legend-dot" style="background:#34d399"></span>CLI</span>
-            <span style="margin-left:0.5rem;padding-left:0.75rem;border-left:1px solid rgba(255,255,255,0.1)"><span class="legend-line"></span>Total LOC coding</span>
+            <span style="margin-left:0.5rem;padding-left:0.75rem;border-left:1px solid rgba(255,255,255,0.1)"><span class="legend-line"></span>Total Output LOC</span>
         </div>`;
 }
 
@@ -1442,8 +1498,8 @@ function renderDonutSection(filteredUsers) {
     let totalDocLoc = 0;
 
     for (const u of filteredUsers) {
-        if (u.loc_by_model) {
-            for (const [m, loc] of Object.entries(u.loc_by_model)) {
+        if (u.loc_by_model_chat_strict) {
+            for (const [m, loc] of Object.entries(u.loc_by_model_chat_strict)) {
                 locByModel[m] = (locByModel[m] || 0) + loc;
             }
         }
@@ -1477,6 +1533,20 @@ function renderDonutSection(filteredUsers) {
 
     const splitModelLabel = label => { const f = label.indexOf('-'); if (f === -1) return [label]; const s = label.indexOf('-', f + 1); return s === -1 ? [label] : [label.slice(0, s), label.slice(s + 1)]; };
 
+    const expensiveModels = new Set((watchModelUseGroups.expensive || []).map(m => String(m || '').trim().toLowerCase()));
+    const weakModels = new Set((watchModelUseGroups.weak || []).map(m => String(m || '').trim().toLowerCase()));
+    const locByModelClass = {};
+    for (const [model, loc] of Object.entries(locByModel)) {
+        const normalizedModel = String(model || '').trim().toLowerCase();
+        if (expensiveModels.has(normalizedModel)) {
+            locByModelClass['expensive models'] = (locByModelClass['expensive models'] || 0) + loc;
+        } else if (weakModels.has(normalizedModel)) {
+            locByModelClass['weak models'] = (locByModelClass['weak models'] || 0) + loc;
+        } else {
+            locByModelClass['regular models'] = (locByModelClass['regular models'] || 0) + loc;
+        }
+    }
+
     // Consolidate doc-language labels before building the Steering by Syntax donut
     const DOC_LANG_ALIASES = { instructions: 'skills', prompt: 'skills', skill: 'skills', text: 'markdown', plaintext: 'markdown', mermaid: 'markdown' };
     const locByDocLanguageNorm = {};
@@ -1486,6 +1556,7 @@ function renderDonutSection(filteredUsers) {
     }
 
     document.getElementById('donut-model').innerHTML    = buildDonutChart(locByModel,            'by Model', splitModelLabel);
+    document.getElementById('donut-model-class').innerHTML = buildDonutChart(locByModelClass,    'By Model class');
     document.getElementById('donut-language').innerHTML = buildDonutChart(locByFeature,          'by Feature');
     document.getElementById('donut-ide').innerHTML      = buildDonutChart(locByIde,              'by IDE');
     document.getElementById('donut-activity').innerHTML = buildDonutChart(locByActivity,         'by Activity');

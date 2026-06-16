@@ -50,6 +50,36 @@ const mimeTypes = {
 // LOC for these is counted separately as doc_loc instead of code_loc
 const documentingLanguages = ['markdown', 'text', 'prompt', 'instructions', 'mermaid', 'plaintext', 'bibtex', 'snippets', 'latex', 'restructuredtext', 'search-result', 'skill', 'tex', 'chatagent'];
 
+function normalizeWatchModelUse(raw) {
+    const flat = [];
+    const groups = {};
+    const seen = new Set();
+
+    const addModel = (model) => {
+        const value = String(model || '').trim();
+        if (!value || seen.has(value)) return;
+        seen.add(value);
+        flat.push(value);
+    };
+
+    if (Array.isArray(raw)) {
+        raw.forEach(addModel);
+    } else if (raw && typeof raw === 'object') {
+        for (const [groupName, models] of Object.entries(raw)) {
+            if (!Array.isArray(models)) continue;
+            groups[groupName] = [];
+            for (const model of models) {
+                const value = String(model || '').trim();
+                if (!value) continue;
+                groups[groupName].push(value);
+                addModel(value);
+            }
+        }
+    }
+
+    return { flat, groups };
+}
+
 function serveStaticFile(req, res) {
     const reqPath = new URL(req.url, `http://${req.headers.host}`).pathname;
     let assetPath = decodeURIComponent(reqPath);
@@ -254,10 +284,12 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                     loc_suggested_to_delete_sum: 0,
                     doc_loc_added_sum: 0,
                     doc_loc_deleted_sum: 0,
+                    doc_loc_suggested_sum: 0,
+                    doc_loc_applied_sum: 0,
                     user_initiated_interaction_count: 0,
                     code_generation_activity_count: 0,
                     code_acceptance_activity_count: 0,
-                    cli_prompt_count: 0,
+                    cli_request_count: 0,
                     active_days: new Set(),
                     agent_days: new Set(),
                     chat_days: new Set(),
@@ -283,9 +315,15 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                     accountIdes: {},   // { [login]: { ides: {name:loc}, ideVersions: {name:{...}} } }
                     accountCli: {},    // { [login]: { cli_version, last_seen_day } }
                     accountEnterpriseIds: {}, // { [login]: Set<enterprise_id> }
-                    allLocByModel: {},
+                    allLocByModel: {},                // all-surface model aggregation (with fallback from feature)
+                    allLocByModel_chat_strict: {},    // chat-only model aggregation from totals_by_language_model (no fallback)
                     allLocByLanguage: {},
-                    modelFeatures: {},  // { [model]: { [feature]: value } }
+                    features: {},        // { [feature]: value } — with fallback (mixed LOC + events)
+                    features_loc_strict: {},  // { [feature]: LOC_only } — pure LOC, no fallback
+                    features_events: {},      // { [feature]: event_count } — pure event counts
+                    modelFeatures: {},   // { [model]: { [feature]: value } } — with fallback (mixed)
+                    modelFeatures_loc_strict: {},  // { [model]: { [feature]: LOC_only } } — pure LOC
+                    modelFeatures_events: {},      // { [model]: { [feature]: event_count } } — pure events
                     ideVersions: {},  // { [ide_name]: { last_seen_day, ide_version, plugin, plugin_version } }
                     cli_version_info: null,  // { last_seen_day, cli_version }
                     cli_output_tokens_sum: 0,
@@ -302,7 +340,7 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             }
             stats.code_generation_activity_count += (entry.code_generation_activity_count || 0);
             stats.code_acceptance_activity_count += (entry.code_acceptance_activity_count || 0);
-            stats.cli_prompt_count += (entry.totals_by_cli?.prompt_count || 0);
+            stats.cli_request_count += (entry.totals_by_cli?.request_count || 0);
             stats.cli_output_tokens_sum += (entry.totals_by_cli?.token_usage?.output_tokens_sum || 0);
             if (entry.day && entry.totals_by_cli?.last_known_cli_version?.cli_version) {
                 const cv = entry.totals_by_cli.last_known_cli_version.cli_version;
@@ -354,15 +392,19 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                 let entryDocLoc = 0, entryTotalLoc = 0;
                 for (const lf of entry.totals_by_language_feature) {
                     const lang = (lf.language || 'unknown').toLowerCase();
-                    const lfLoc = (lf.loc_added_sum || 0) + (lf.loc_deleted_sum || 0);
+                    const acceptedLoc = (lf.loc_added_sum || 0) + (lf.loc_deleted_sum || 0);
+                    const suggestedLoc = (lf.loc_suggested_to_add_sum || 0) + (lf.loc_suggested_to_delete_sum || 0);
+                    const outputLoc = acceptedLoc + suggestedLoc;
                     if (documentingLanguages.includes(lang)) {
                         stats.doc_loc_added_sum += (lf.loc_added_sum || 0);
                         stats.doc_loc_deleted_sum += (lf.loc_deleted_sum || 0);
-                        if (lfLoc > 0) stats.doc_languages.add(lf.language);
-                        entryDocLoc += lfLoc;
+                        stats.doc_loc_suggested_sum += suggestedLoc;
+                        stats.doc_loc_applied_sum += acceptedLoc;
+                        if (outputLoc > 0) stats.doc_languages.add(lf.language);
+                        entryDocLoc += outputLoc;
                     }
-                    if (lfLoc > 0) stats.allLocByLanguage[lf.language || 'unknown'] = (stats.allLocByLanguage[lf.language || 'unknown'] || 0) + lfLoc;
-                    entryTotalLoc += lfLoc;
+                    if (outputLoc > 0) stats.allLocByLanguage[lf.language || 'unknown'] = (stats.allLocByLanguage[lf.language || 'unknown'] || 0) + outputLoc;
+                    entryTotalLoc += outputLoc;
                 }
                 if (entry.day && stats.daily[entry.day]) {
                     stats.daily[entry.day].doc_loc += entryDocLoc;
@@ -421,6 +463,8 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                     // Track in comprehensive maps (used for donut charts and now also for favorites)
                     if (tm.model && totalActivity > 0) {
                         stats.allLocByModel[tm.model] = (stats.allLocByModel[tm.model] || 0) + totalActivity;
+                        // Also populate chat-strict map (no fallback, only from totals_by_language_model)
+                        stats.allLocByModel_chat_strict[tm.model] = (stats.allLocByModel_chat_strict[tm.model] || 0) + totalActivity;
                         stats.models[tm.model] = (stats.models[tm.model] || 0) + totalActivity;
                     }
                     if (tm.language && totalActivity > 0) {
@@ -436,7 +480,8 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             }
 
             // Fallback: If totals_by_language_model is empty (e.g., Visual Studio code completion),
-            // extract language data from totals_by_language_feature to ensure we track language usage
+            // extract language data from totals_by_language_feature to ensure we track language usage.
+            // NOTE: This populates allLocByModel (all-surface) but NOT allLocByModel_chat_strict (chat-only).
             if (Array.isArray(entry.totals_by_language_model) && entry.totals_by_language_model.length === 0) {
                 if (Array.isArray(entry.totals_by_language_feature)) {
                     for (const lf of entry.totals_by_language_feature) {
@@ -500,14 +545,26 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                     if (!tf.feature) continue;
                     const fLoc = (tf.loc_suggested_to_add_sum || 0) + (tf.loc_suggested_to_delete_sum || 0)
                                + (tf.loc_added_sum || 0) + (tf.loc_deleted_sum || 0);
+                    const fEvents = (tf.user_initiated_interaction_count || 0)
+                                  + (tf.code_generation_activity_count || 0)
+                                  + (tf.code_acceptance_activity_count || 0);
+                    
+                    // Strict LOC map: accumulate LOC only (no fallback)
+                    if (fLoc > 0) {
+                        stats.features_loc_strict[tf.feature] = (stats.features_loc_strict[tf.feature] || 0) + fLoc;
+                    }
+                    
+                    // Events map: accumulate event counts only
+                    if (fEvents > 0) {
+                        stats.features_events[tf.feature] = (stats.features_events[tf.feature] || 0) + fEvents;
+                    }
+                    
+                    // Original mixed-unit map: LOC if available, else events (for backward compat)
                     // When a feature produces no LOC output (e.g. chat_panel_plan_mode finishing
                     // with 0 suggestions, or chat_panel_unknown_mode), fall back to interaction
                     // counts so the feature still appears in the breakdown.
                     // Using the fallback only when fLoc=0 prevents double-accounting LOC.
-                    const fValue = fLoc > 0 ? fLoc
-                                 : (tf.user_initiated_interaction_count || 0)
-                                   + (tf.code_generation_activity_count || 0)
-                                   + (tf.code_acceptance_activity_count || 0);
+                    const fValue = fLoc > 0 ? fLoc : fEvents;
                     if (fValue > 0) {
                         stats.features[tf.feature] = (stats.features[tf.feature] || 0) + fValue;
                     }
@@ -519,10 +576,24 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                     if (!mf.model || !mf.feature) continue;
                     const fLoc = (mf.loc_suggested_to_add_sum || 0) + (mf.loc_suggested_to_delete_sum || 0)
                                + (mf.loc_added_sum || 0) + (mf.loc_deleted_sum || 0);
-                    const fValue = fLoc > 0 ? fLoc
-                                 : (mf.user_initiated_interaction_count || 0)
-                                   + (mf.code_generation_activity_count || 0)
-                                   + (mf.code_acceptance_activity_count || 0);
+                    const fEvents = (mf.user_initiated_interaction_count || 0)
+                                  + (mf.code_generation_activity_count || 0)
+                                  + (mf.code_acceptance_activity_count || 0);
+                    
+                    // Strict LOC map: accumulate LOC only (no fallback)
+                    if (fLoc > 0) {
+                        if (!stats.modelFeatures_loc_strict[mf.model]) stats.modelFeatures_loc_strict[mf.model] = {};
+                        stats.modelFeatures_loc_strict[mf.model][mf.feature] = (stats.modelFeatures_loc_strict[mf.model][mf.feature] || 0) + fLoc;
+                    }
+                    
+                    // Events map: accumulate event counts only
+                    if (fEvents > 0) {
+                        if (!stats.modelFeatures_events[mf.model]) stats.modelFeatures_events[mf.model] = {};
+                        stats.modelFeatures_events[mf.model][mf.feature] = (stats.modelFeatures_events[mf.model][mf.feature] || 0) + fEvents;
+                    }
+                    
+                    // Original mixed-unit map: LOC if available, else events (for backward compat)
+                    const fValue = fLoc > 0 ? fLoc : fEvents;
                     if (fValue > 0) {
                         if (!stats.modelFeatures[mf.model]) stats.modelFeatures[mf.model] = {};
                         stats.modelFeatures[mf.model][mf.feature] = (stats.modelFeatures[mf.model][mf.feature] || 0) + fValue;
@@ -546,14 +617,21 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
         const totalLocAdded = user.loc_added_sum;
         const totalLocDeleted = user.loc_deleted_sum;
         const totalLocChanged = totalLocAdded + totalLocDeleted;
+        const totalSuggestedChanged = user.loc_suggested_to_add_sum + user.loc_suggested_to_delete_sum;
+        const totalOutputChanged = totalSuggestedChanged + totalLocChanged;
+
+        const docLocSuggested = user.doc_loc_suggested_sum;
+        const docLocApplied = user.doc_loc_applied_sum;
+        const docLocChanged = docLocSuggested + docLocApplied;
+
+        const codeLocSuggested = Math.max(0, totalSuggestedChanged - docLocSuggested);
+        const codeLocApplied = Math.max(0, totalLocChanged - docLocApplied);
+        const codeLocChanged = codeLocSuggested + codeLocApplied;
 
         const docLocAdded = user.doc_loc_added_sum;
         const docLocDeleted = user.doc_loc_deleted_sum;
-        const docLocChanged = docLocAdded + docLocDeleted;
-
         const codeLocAdded = totalLocAdded - docLocAdded;
         const codeLocDeleted = totalLocDeleted - docLocDeleted;
-        const codeLocChanged = totalLocChanged - docLocChanged;
 
         totalOrgLocChanged += totalLocChanged;
 
@@ -628,13 +706,17 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             total_loc_changed: totalLocChanged,
             total_loc_added: totalLocAdded,
             total_loc_deleted: totalLocDeleted,
-            total_suggested_changed: user.loc_suggested_to_add_sum + user.loc_suggested_to_delete_sum,
+            total_suggested_changed: totalSuggestedChanged,
             doc_loc_changed: docLocChanged,
             doc_loc_added: docLocAdded,
             doc_loc_deleted: docLocDeleted,
+            doc_loc_suggested: docLocSuggested,
+            doc_loc_applied: docLocApplied,
             code_loc_changed: codeLocChanged,
             code_loc_added: codeLocAdded,
             code_loc_deleted: codeLocDeleted,
+            code_loc_suggested: codeLocSuggested,
+            code_loc_applied: codeLocApplied,
             active_days_count: user.active_days.size,
             agent_days_count: user.agent_days.size,
             chat_days_count: user.chat_days.size,
@@ -643,10 +725,10 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             cloud_agent_days_count: user.cloud_agent_days.size,
             cli_output_tokens_sum: user.cli_output_tokens_sum,
             ai_adoption_phase_number: user.ai_adoption_phase_number,
-            turns: user.user_initiated_interaction_count + user.code_generation_activity_count + user.cli_prompt_count,
+            turns: user.user_initiated_interaction_count + user.cli_request_count,
             acceptance_rate: Math.round(generationRatio * 100) + '%',
             avg_loc_added_daily: user.active_days.size > 0 ? Math.round(codeLocAdded / user.active_days.size) : 0,
-            perf_score: user.active_days.size > 0 ? Math.round(Math.max(codeLocAdded, codeLocDeleted) / user.active_days.size) : 0,
+            perf_score: user.active_days.size > 0 ? Math.round(totalOutputChanged / user.active_days.size) : 0,
             favorite_model: favModel !== 'None' ? `${favModel}<br><span style="font-size:0.8em;color:var(--text-muted)">${favModelPct}</span>` : '-',
             favorite_ide: favIde !== 'None' ? `${favIde}<br><span style="font-size:0.8em;color:var(--text-muted)">${favIdePct}</span>` : '-',
             favorite_language: favLanguage !== 'None' ? `${favLanguage}<br><span style="font-size:0.8em;color:var(--text-muted)">${favLanguagePct}</span>` : '-',
@@ -683,6 +765,7 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                 ])
             ),
             loc_by_model: user.allLocByModel,
+            loc_by_model_chat_strict: user.allLocByModel_chat_strict,
             loc_by_language: user.allLocByLanguage,
             loc_by_code_language: Object.fromEntries(
                 Object.entries(user.allLocByLanguage).filter(([l]) => !documentingLanguages.includes(l.toLowerCase()))
@@ -691,16 +774,25 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                 Object.entries(user.allLocByLanguage).filter(([l]) => documentingLanguages.includes(l.toLowerCase()))
             ),
             loc_by_feature: user.features,
+            loc_by_feature_strict: user.features_loc_strict,
+            events_by_feature: user.features_events,
             loc_by_model_feature: user.modelFeatures,
+            loc_by_model_feature_strict: user.modelFeatures_loc_strict,
+            events_by_model_feature: user.modelFeatures_events,
             loc_by_ide: user.ides,
             models: undefined,
             ides: undefined,
             languages: undefined,
             features: undefined,
+            features_loc_strict: undefined,
+            features_events: undefined,
             doc_languages: undefined,
             allLocByModel: undefined,
+            allLocByModel_chat_strict: undefined,
             allLocByLanguage: undefined,
             modelFeatures: undefined,
+            modelFeatures_loc_strict: undefined,
+            modelFeatures_events: undefined,
             ideVersions: undefined,
             cli_version_info: undefined,
             accountDaily: undefined,
@@ -763,7 +855,9 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             total_loc_changed: 0, total_loc_added: 0, total_loc_deleted: 0,
             total_suggested_changed: 0,
             doc_loc_changed: 0, doc_loc_added: 0, doc_loc_deleted: 0,
+            doc_loc_suggested: 0, doc_loc_applied: 0,
             code_loc_changed: 0, code_loc_added: 0, code_loc_deleted: 0,
+            code_loc_suggested: 0, code_loc_applied: 0,
             active_days_count: 0, agent_days_count: 0, chat_days_count: 0, cli_days_count: 0, code_review_days_count: 0, cloud_agent_days_count: 0, cli_output_tokens_sum: 0, ai_adoption_phase_number: null,
             turns: 0, acceptance_rate: '0%',
             avg_loc_added_daily: 0, perf_score: 0,
@@ -811,6 +905,8 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
         return { id, label: enterpriseLabelMap[id] || id, organizations: orgs };
     });
 
+    const { flat: watchModelUse, groups: watchModelUseGroups } = normalizeWatchModelUse(config.watch_model_use);
+
     return {
         users: allUsers,
         totalUsers: results.length,
@@ -820,7 +916,8 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
         availableTeams,
         availableEnterprises,
         allLanguages,
-        watchModelUse: Array.isArray(config.watch_model_use) ? config.watch_model_use : [],
+        watchModelUse,
+        watchModelUseGroups,
         preferredEnterpriseIds
     };
 }

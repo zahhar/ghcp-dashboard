@@ -22,6 +22,26 @@
 //     explanation:  how the metric was calculated (shown in hover tooltip)
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ── Single source of truth for maturity metric thresholds ──────────────────
+// Used by both maturity rules and DAU chart color coding. Keep in sync.
+const MATURITY_THRESHOLDS = {
+    dau: {
+        green: 70,    // ≥ 70%
+        amber: 40,    // 40–69%
+        // Red: < 40%
+    },
+    avg_turns: {
+        green: 100,   // ≥ 100 turns/user/month
+        amber: 50,    // 50–99
+        // Red: < 50
+    },
+    avg_perf: {
+        green: 250,   // ≥ 250 LOC/user/day
+        amber: 100,   // 100–249
+        // Red: < 100
+    },
+};
+
 const MATURITY_RECOMMENDATIONS = {
     dau:
         'Setup pair programming sessions between inactive and active users. Ensure user logged into IDE/CLI with GH account. Revoke licenses for non-coding roles.',
@@ -54,11 +74,11 @@ const MATURITY_RULES = [
                 return { status: 'gray', value: 'N/A', explanation: 'No DAU data available for the selected period.' };
             }
             const pct = ctx.avgDauPct;
-            const status = pct >= 70 ? 'green' : pct >= 40 ? 'amber' : 'red';
+            const status = pct >= MATURITY_THRESHOLDS.dau.green ? 'green' : pct >= MATURITY_THRESHOLDS.dau.amber ? 'amber' : 'red';
             return {
                 status,
                 value: pct + '%',
-                explanation: `Thresholds: Green ≥ 70%, Amber 40–69%, Red < 40%.`,
+                explanation: `Thresholds: Green ≥ ${MATURITY_THRESHOLDS.dau.green}%, Amber ${MATURITY_THRESHOLDS.dau.amber}–${MATURITY_THRESHOLDS.dau.green - 1}%, Red < ${MATURITY_THRESHOLDS.dau.amber}%.`,
             };
         },
     },
@@ -148,17 +168,17 @@ const MATURITY_RULES = [
                 return { status: 'gray', value: 'N/A', explanation: 'No users in current view.' };
             }
             const avg = ctx.avgTurns;
-            const status = avg >= 100 ? 'green' : avg >= 50 ? 'amber' : 'red';
+            const status = avg >= MATURITY_THRESHOLDS.avg_turns.green ? 'green' : avg >= MATURITY_THRESHOLDS.avg_turns.amber ? 'amber' : 'red';
             return {
                 status,
                 value: `${avg} turns/user/month`,
-                explanation: `Avg turns per user = ${avg} (total turns ÷ ${total} non-revoked users). Thresholds per period: Green ≥ 100, Amber 50–99, Red < 50.`,
+                explanation: `Avg turns per user = ${avg} (total turns ÷ ${total} non-revoked users). Thresholds per period: Green ≥ ${MATURITY_THRESHOLDS.avg_turns.green}, Amber ${MATURITY_THRESHOLDS.avg_turns.amber}–${MATURITY_THRESHOLDS.avg_turns.green - 1}, Red < ${MATURITY_THRESHOLDS.avg_turns.amber}.`,
             };
         },
     },
 
     // ── 6. Avg Perf / User ────────────────────────────────────────────────────
-    // Green ≥ 100 LOC/user/day | Amber 50–99 | Red < 50
+    // Green ≥ 250 LOC/user/day | Amber 100–249 | Red < 100
     {
         id: 'avg_perf',
         name: 'Avg Perf',
@@ -168,11 +188,11 @@ const MATURITY_RULES = [
                 return { status: 'gray', value: 'N/A', explanation: 'No active users in current view.' };
             }
             const avg = ctx.avgPerf;
-            const status = avg >= 100 ? 'green' : avg >= 50 ? 'amber' : 'red';
+            const status = avg >= MATURITY_THRESHOLDS.avg_perf.green ? 'green' : avg >= MATURITY_THRESHOLDS.avg_perf.amber ? 'amber' : 'red';
             return {
                 status,
                 value: `${avg} LOC/user/day`,
-                explanation: `Avg PERF = ${avg} LOC/user/day (sum of perf_scores ÷ ${activeCount} active users). PERF per user = max(code added, code deleted) ÷ active days. Thresholds: Green ≥ 100, Amber 50–99, Red < 50.`,
+                explanation: `Avg PERF = ${avg} LOC/user/day (sum of perf_scores ÷ ${activeCount} active users). PERF per user = Total Output ÷ active days, where Total Output = suggested LOC + applied LOC. Thresholds: Green ≥ ${MATURITY_THRESHOLDS.avg_perf.green}, Amber ${MATURITY_THRESHOLDS.avg_perf.amber}–${MATURITY_THRESHOLDS.avg_perf.green - 1}, Red < ${MATURITY_THRESHOLDS.avg_perf.amber}.`,
             };
         },
     },

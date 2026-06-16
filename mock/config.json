@@ -27,9 +27,8 @@
       "filter_to_known_users": false
     }
   ],
-  "watch_model_use": [
-    "gpt-4o",
-    "gpt-4.1",
-    "gemini-3.5-flash"
-  ]
+  "watch_model_use": {
+    "expensive": ["claude-opus-4.7", "gpt-5.5", "gemini-3.5-flash"],
+    "weak": ["gpt-4.1","gpt-4o"]
+    } 
 }
