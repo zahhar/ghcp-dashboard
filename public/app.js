@@ -397,7 +397,14 @@ async function fetchDashboardData(month = '') {
             });
             Object.keys(byUnit).sort().forEach(unit => {
                 const grp = unit ? document.createElement('optgroup') : null;
-                if (grp) grp.label = unit;
+                if (grp) {
+                    grp.label = unit;
+                    // Selectable "All [unit]" option at the top of each group
+                    const allUnitOpt = document.createElement('option');
+                    allUnitOpt.value = 'unit:' + unit;
+                    allUnitOpt.textContent = 'All ' + unit;
+                    grp.appendChild(allUnitOpt);
+                }
                 byUnit[unit].forEach(t => {
                     const opt = document.createElement('option');
                     opt.value = t.id;
@@ -683,9 +690,11 @@ function renderUsersTable() {
     const tbody = document.getElementById('users-body');
     tbody.innerHTML = '';
 
-    // Apply team filter
+    // Apply team filter (value may be a team ID or 'unit:X' for a whole unit)
     let sortedUsers = currentTeamFilter
-        ? globalUsers.filter(u => u.team === currentTeamFilter)
+        ? (currentTeamFilter.startsWith('unit:')
+            ? globalUsers.filter(u => globalTeams[u.team]?.unit === currentTeamFilter.slice(5))
+            : globalUsers.filter(u => u.team === currentTeamFilter))
         : [...globalUsers];
 
     // Apply enterprise/organization scope filter
@@ -1229,7 +1238,10 @@ function renderDAUChart() {
     const container = document.getElementById('dau-chart-container');
     if (!container) return;
     if (!globalUsers.length) { container.innerHTML = ''; return; }
-    const filteredUsers = globalUsers.filter(u => !u.revoked && (!currentTeamFilter || u.team === currentTeamFilter));
+    const filteredUsers = globalUsers.filter(u => !u.revoked && (!currentTeamFilter ||
+        (currentTeamFilter.startsWith('unit:')
+            ? globalTeams[u.team]?.unit === currentTeamFilter.slice(5)
+            : u.team === currentTeamFilter)));
     container.innerHTML = buildDAUChart(filteredUsers, filteredUsers.length, currentMonthFilter);
     const avgStat = document.getElementById('dau-avg-stat');
     if (avgStat) {
