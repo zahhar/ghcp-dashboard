@@ -93,6 +93,52 @@ const TABLE_ANIM_DELAY_MAX = 0.5;
 // Fuzzy search: accepted match window = query length × this multiplier (controls how spread-out matched chars can be)
 const FUZZY_MATCH_SPREAD = 2;
 
+// ── Version comparison helpers ──
+
+// Convert a version string to a comparable integer.
+// Takes the part before the first dash (e.g. "1.9.0-251" → "1.9.0"), removes dots, returns integer.
+// Returns -1 for null / unparseable values.
+function versionToInt(v) {
+    if (!v || typeof v !== 'string') return -1;
+    const base = v.split('-')[0];
+    const n = parseInt(base.replace(/\./g, ''), 10);
+    return isNaN(n) ? -1 : n;
+}
+
+// Module-level cache of the latest (max) version per IDE, per plugin, and for CLI,
+// computed from the currently filtered user set. Populated by renderDonutSection.
+let latestVersions = { ides: {}, plugins: {}, cli: -1 };
+
+// Returns true if any of the user's accounts (IDE or CLI) is below the
+// period-maximum version stored in `latestVersions`.
+// Always uses per-account data so that a user with one up-to-date and one
+// outdated account is correctly flagged.
+function userHasAnyOutdated(u) {
+    const acctIdes = u.account_ides && Object.keys(u.account_ides).length > 0
+        ? Object.values(u.account_ides)
+        : (u.ide_versions ? [{ ide_versions: u.ide_versions }] : []);
+    for (const acct of acctIdes) {
+        if (!acct.ide_versions) continue;
+        for (const [ide, v] of Object.entries(acct.ide_versions)) {
+            if (v.ide_version) {
+                const latest = latestVersions.ides[ide] ?? -1;
+                if (latest > 0 && versionToInt(v.ide_version) < latest) return true;
+            }
+            if (v.plugin && v.plugin_version) {
+                const latest = latestVersions.plugins[v.plugin] ?? -1;
+                if (latest > 0 && versionToInt(v.plugin_version) < latest) return true;
+            }
+        }
+    }
+    const cliVersions = u.account_cli && Object.keys(u.account_cli).length > 0
+        ? Object.values(u.account_cli).filter(Boolean)
+        : (u.cli_version ? [u.cli_version] : []);
+    for (const cliVer of cliVersions) {
+        if (latestVersions.cli > 0 && versionToInt(cliVer) < latestVersions.cli) return true;
+    }
+    return false;
+}
+
 const DEFAULT_STATUS_FILTER = 'active';
 const DEFAULT_SORT_COLUMN = 'total_output';
 const DEFAULT_SORT_DESC = true;
@@ -916,22 +962,34 @@ function buildUserMetaSection(user, { showIdes = true } = {}) {
     if (user.all_models_list && user.all_models_list.length) {
         rows.push(`<div class="meta-row"><span class="meta-label">Models:</span> ${user.all_models_list.join(', ')}</div>`);
     }
-    if (showIdes && user.all_ides_list && user.all_ides_list.length) {
-        const ideLabels = user.all_ides_list.map(ide => {
+    if (showIdes && ((user.all_ides_list && user.all_ides_list.length) || user.cli_version)) {
+        const ideLabels = (user.all_ides_list || []).map(ide => {
             const v = user.ide_versions && user.ide_versions[ide];
             if (v) {
                 const detail = [];
-                if (v.ide_version) detail.push(v.ide_version);
-                if (v.plugin && v.plugin_version) detail.push(`${v.plugin} ${v.plugin_version}`);
-                else if (v.plugin) detail.push(v.plugin);
+                if (v.ide_version) {
+                    const latestN = latestVersions.ides[ide] ?? -1;
+                    const outdated = latestN > 0 && versionToInt(v.ide_version) < latestN;
+                    detail.push(v.ide_version + (outdated ? ' <span title="Not on the latest version seen in this period">⚠️ Outdated</span>' : ''));
+                }
+                if (v.plugin && v.plugin_version) {
+                    const latestN = latestVersions.plugins[v.plugin] ?? -1;
+                    const outdated = latestN > 0 && versionToInt(v.plugin_version) < latestN;
+                    detail.push(`${v.plugin} ${v.plugin_version}` + (outdated ? ' <span title="Not on the latest version seen in this period">⚠️ Outdated</span>' : ''));
+                } else if (v.plugin) {
+                    detail.push(v.plugin);
+                }
                 return detail.length ? `${ide} <span style="color:var(--text-muted);font-size:0.9em">(${detail.join(', ')})</span>` : ide;
             }
             return ide;
         });
+        if (user.cli_version) {
+            const latestN = latestVersions.cli;
+            const outdated = latestN > 0 && versionToInt(user.cli_version) < latestN;
+            const badge = outdated ? ' <span title="Not on the latest version seen in this period">⚠️ Outdated</span>' : '';
+            ideLabels.push(`CLI <span style="color:var(--text-muted);font-size:0.9em">(${user.cli_version}${badge})</span>`);
+        }
         rows.push(`<div class="meta-row"><span class="meta-label">IDEs:</span> ${ideLabels.join(', ')}</div>`);
-    }
-    if (user.cli_version) {
-        rows.push(`<div class="meta-row"><span class="meta-label">CLI:</span> ${user.cli_version}</div>`);
     }
     if (!rows.length) return '';
     return `<div class="user-meta-section">${rows.join('')}</div>`;
@@ -1008,9 +1066,18 @@ function openUserModal(user) {
                 const v = acct.ide_versions && acct.ide_versions[ide];
                 if (v) {
                     const detail = [];
-                    if (v.ide_version) detail.push(v.ide_version);
-                    if (v.plugin && v.plugin_version) detail.push(`${v.plugin} ${v.plugin_version}`);
-                    else if (v.plugin) detail.push(v.plugin);
+                    if (v.ide_version) {
+                        const latestN = latestVersions.ides[ide] ?? -1;
+                        const outdated = latestN > 0 && versionToInt(v.ide_version) < latestN;
+                        detail.push(v.ide_version + (outdated ? ' <span title="Not on the latest version seen in this period">⚠️ Outdated</span>' : ''));
+                    }
+                    if (v.plugin && v.plugin_version) {
+                        const latestN = latestVersions.plugins[v.plugin] ?? -1;
+                        const outdated = latestN > 0 && versionToInt(v.plugin_version) < latestN;
+                        detail.push(`${v.plugin} ${v.plugin_version}` + (outdated ? ' <span title="Not on the latest version seen in this period">⚠️ Outdated</span>' : ''));
+                    } else if (v.plugin) {
+                        detail.push(v.plugin);
+                    }
                     return detail.length ? `${ide} <span style="color:var(--text-muted);font-size:0.85em">(${detail.join(', ')})</span>` : ide;
                 }
                 return ide;
@@ -1018,7 +1085,10 @@ function openUserModal(user) {
             parts.push(`<span style="font-size:0.8em;color:var(--text-muted)"><b>IDE:</b> ${ideLabels.join(', ')}</span>`);
         }
         if (cliVer) {
-            parts.push(`<span style="font-size:0.8em;color:var(--text-muted)"><b>CLI:</b> ${cliVer}</span>`);
+            const latestN = latestVersions.cli;
+            const outdated = latestN > 0 && versionToInt(cliVer) < latestN;
+            const badge = outdated ? ' <span title="Not on the latest version seen in this period">⚠️ Outdated</span>' : '';
+            parts.push(`<span style="font-size:0.8em;color:var(--text-muted)"><b>CLI:</b> ${cliVer}${badge}</span>`);
         }
         return parts.length ? `<div style="margin-top:4px;display:flex;flex-wrap:wrap;gap:0.5rem">${parts.join('')}</div>` : '';
     }
@@ -1567,6 +1637,63 @@ function renderDonutSection(filteredUsers) {
         locByDocLanguageNorm[key] = (locByDocLanguageNorm[key] || 0) + val;
     }
 
+    // ── Compute latest (max) versions across the filtered user set ──
+    // Iterates per-account data (account_ides / account_cli) so that each
+    // individual account's version is considered, not just the user-level
+    // aggregate which only retains the most-recently-dated account's version.
+    const newLatest = { ides: {}, plugins: {}, cli: -1 };
+    function _scanVersionsInto(target, ideVersionsMap) {
+        for (const [ide, v] of Object.entries(ideVersionsMap)) {
+            if (v.ide_version) {
+                const n = versionToInt(v.ide_version);
+                if (n > (target.ides[ide] ?? -1)) target.ides[ide] = n;
+            }
+            if (v.plugin && v.plugin_version) {
+                const n = versionToInt(v.plugin_version);
+                if (n > (target.plugins[v.plugin] ?? -1)) target.plugins[v.plugin] = n;
+            }
+        }
+    }
+    for (const u of filteredUsers) {
+        // Prefer per-account granularity; fall back to user-level if absent
+        if (u.account_ides && Object.keys(u.account_ides).length > 0) {
+            for (const acct of Object.values(u.account_ides)) {
+                if (acct.ide_versions) _scanVersionsInto(newLatest, acct.ide_versions);
+            }
+        } else if (u.ide_versions) {
+            _scanVersionsInto(newLatest, u.ide_versions);
+        }
+        // CLI: check per-account versions
+        if (u.account_cli && Object.keys(u.account_cli).length > 0) {
+            for (const cliVer of Object.values(u.account_cli)) {
+                if (cliVer) {
+                    const n = versionToInt(cliVer);
+                    if (n > newLatest.cli) newLatest.cli = n;
+                }
+            }
+        } else if (u.cli_version) {
+            const n = versionToInt(u.cli_version);
+            if (n > newLatest.cli) newLatest.cli = n;
+        }
+    }
+    latestVersions = newLatest;
+
+    // ── Version-status donut: Newest vs Outdated (per-account check) ──
+    // userHasAnyOutdated is a module-level function that reads latestVersions.
+    let newestCount = 0, outdatedCount = 0;
+    for (const u of filteredUsers) {
+        const hasIdes = (u.account_ides && Object.keys(u.account_ides).length > 0) ||
+                        (u.ide_versions && Object.keys(u.ide_versions).length > 0);
+        const hasCli  = (u.account_cli  && Object.values(u.account_cli).some(Boolean)) || !!u.cli_version;
+        if (!hasIdes && !hasCli) continue;
+        if (userHasAnyOutdated(u)) outdatedCount++;
+        else newestCount++;
+    }
+    const versionStatusMap = {};
+    if (newestCount)  versionStatusMap['Newest']   = newestCount;
+    if (outdatedCount) versionStatusMap['Outdated'] = outdatedCount;
+    document.getElementById('donut-version').innerHTML = buildDonutChart(versionStatusMap, 'by Version Status');
+
     document.getElementById('donut-model').innerHTML    = buildDonutChart(locByModel,            'by Model', splitModelLabel);
     document.getElementById('donut-model-class').innerHTML = buildDonutChart(locByModelClass,    'By Model class');
     document.getElementById('donut-language').innerHTML = buildDonutChart(locByFeature,          'by Feature');
@@ -1643,7 +1770,7 @@ function renderMaturitySection(users) {
     if (!content) return;
 
     const { avgDauPct, avgTurns, avgPerf } = computeTeamAggregates(users, currentMonthFilter);
-    const ctx = { watchModelUse, avgDauPct, avgTurns, avgPerf, computeStreak: computeCurrentStreak, prevMonthStats, preferredEnterpriseIds: globalPreferredEnterpriseIds };
+    const ctx = { watchModelUse, avgDauPct, avgTurns, avgPerf, computeStreak: computeCurrentStreak, prevMonthStats, preferredEnterpriseIds: globalPreferredEnterpriseIds, latestVersions, isUserOutdated: userHasAnyOutdated };
 
     const STATUS_EMOJI = { green: '🟢', amber: '🟡', red: '🔴', gray: '⚪' };
     const STATUS_VALUE_CLASS = { green: 'maturity-val-green', amber: 'maturity-val-amber', red: 'maturity-val-red', gray: '' };

@@ -61,6 +61,8 @@ const MATURITY_RECOMMENDATIONS = {
         'Train team on model selection by task type (speed vs reasoning), and set a simple "right model for right task" guide for daily use. Check limits – use of a cheap model may indicate user ran out of budget.',
     licence:
         'Complete transition to single account provided by customer. Revoke unused / duplicated licenses.',
+    updated_tools:
+        'Remind to update IDE, GHCP plugin and CLI to most recent version.',
 };
 
 const MATURITY_RULES = [
@@ -364,6 +366,58 @@ const MATURITY_RULES = [
                 status: 'amber',
                 value: multiAccount.length > 0 ? `${multiAccount.length} multi-account` : `${enterpriseIds.size} enterprise${enterpriseIds.size !== 1 ? 's' : ''}`,
                 explanation: `All ${active.length} users are active but license setup is not ideal.${multiNote}${prefNote} Green = all single-account from preferred enterprise, Red = any user with no GHCP activity.`,
+            };
+        },
+    },
+
+    // ── 10. Updated Tools ─────────────────────────────────────────────────────
+    // Green = all users on latest | Amber = some outdated | Red = all outdated
+    // ctx.isUserOutdated(u) and ctx.latestVersions are injected by renderMaturitySection
+    {
+        id: 'updated_tools',
+        name: 'Updated Tools',
+        evaluate(users, ctx) {
+            if (!ctx.isUserOutdated || !ctx.latestVersions) {
+                return { status: 'gray', value: 'N/A', explanation: 'Version data not available.' };
+            }
+            const active = users.filter(u => !u.revoked && !u.never_active);
+            const withVersionData = active.filter(u => {
+                const hasIdes = (u.account_ides && Object.keys(u.account_ides).length > 0) ||
+                                (u.ide_versions  && Object.keys(u.ide_versions).length  > 0);
+                const hasCli  = (u.account_cli   && Object.values(u.account_cli).some(Boolean)) || !!u.cli_version;
+                return hasIdes || hasCli;
+            });
+            if (!withVersionData.length) {
+                return { status: 'gray', value: 'N/A', explanation: 'No version data available for the selected period.' };
+            }
+            const outdatedUsers = withVersionData.filter(u => ctx.isUserOutdated(u));
+            const newestCount   = withVersionData.length - outdatedUsers.length;
+
+            // Build a readable summary of what the period-max versions are
+            const latestIdeParts = Object.keys(ctx.latestVersions.ides).join(', ') || '—';
+            const hasCliData = ctx.latestVersions.cli > 0;
+            const latestSummary = latestIdeParts + (hasCliData ? ', CLI' : '');
+
+            if (outdatedUsers.length === 0) {
+                return {
+                    status: 'green',
+                    value: `All ${withVersionData.length} up-to-date`,
+                    explanation: `All ${withVersionData.length} user(s) with version data are on the latest IDE, plugin and CLI versions seen in this period. Tools tracked: ${latestSummary}.`,
+                };
+            }
+            if (newestCount === 0) {
+                const names = outdatedUsers.map(u => u.human_name).join(', ');
+                return {
+                    status: 'red',
+                    value: `All ${outdatedUsers.length} outdated`,
+                    explanation: `All ${outdatedUsers.length} user(s) with version data are running outdated IDE, plugin or CLI versions. Users: ${names}. Tools tracked: ${latestSummary}.`,
+                };
+            }
+            const names = outdatedUsers.map(u => u.human_name).join(', ');
+            return {
+                status: 'amber',
+                value: `${outdatedUsers.length}/${withVersionData.length} outdated`,
+                explanation: `${outdatedUsers.length} of ${withVersionData.length} user(s) are running outdated tools. Outdated: ${names}. Tools tracked: ${latestSummary}.`,
             };
         },
     },
