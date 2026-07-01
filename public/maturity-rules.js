@@ -56,7 +56,7 @@ const MATURITY_RECOMMENDATIONS = {
     avg_perf:
         'Review tasks team committed to delivering in the sprint and ensure they have enough coding, testing and documentation tasks for all team members.',
     perf_consistency:
-        'Discuss backlog health and nature of work with the team. Add new work to reduce technical debt, improve test coverage & documentation.',
+        'Check if credit limit reached and Copilot blocked. Otherwise: discuss backlog health and nature of work with the team.',
     optimal_model_use:
         'Train team on model selection by task type (speed vs reasoning), and set a simple "right model for right task" guide for daily use. Check limits – use of a cheap model may indicate user ran out of budget.',
     licence:

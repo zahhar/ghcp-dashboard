@@ -354,12 +354,17 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             }
 
             if (entry.day) {
+                // CLI prompt_count is included in user_initiated_interaction_count by the GitHub API.
+                // Subtract it so the daily "Chat asks" segment only reflects genuine chat/agent turns.
+                const entryCliPrompts = entry.totals_by_cli?.prompt_count || 0;
+                const entryChatInitiated = Math.max(0, (entry.user_initiated_interaction_count || 0) - entryCliPrompts);
+
                 if (!stats.daily[entry.day]) {
                     stats.daily[entry.day] = { user_initiated: 0, code_generation: 0, code_loc: 0, doc_loc: 0, cli_turns: 0 };
                 }
-                stats.daily[entry.day].user_initiated += (entry.user_initiated_interaction_count || 0);
+                stats.daily[entry.day].user_initiated += entryChatInitiated;
                 stats.daily[entry.day].code_generation += (entry.code_generation_activity_count || 0);
-                stats.daily[entry.day].cli_turns += (entry.totals_by_cli?.prompt_count || 0);
+                stats.daily[entry.day].cli_turns += entryCliPrompts;
 
                 // Per-account daily tracking (rawLogin is the actual account login)
                 if (rawLogin !== user) {
@@ -368,18 +373,18 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                     if (!stats.accountDaily[rawLogin][entry.day]) {
                         stats.accountDaily[rawLogin][entry.day] = { user_initiated: 0, code_generation: 0, code_loc: 0, doc_loc: 0, cli_turns: 0 };
                     }
-                    stats.accountDaily[rawLogin][entry.day].user_initiated += (entry.user_initiated_interaction_count || 0);
+                    stats.accountDaily[rawLogin][entry.day].user_initiated += entryChatInitiated;
                     stats.accountDaily[rawLogin][entry.day].code_generation += (entry.code_generation_activity_count || 0);
-                    stats.accountDaily[rawLogin][entry.day].cli_turns += (entry.totals_by_cli?.prompt_count || 0);
+                    stats.accountDaily[rawLogin][entry.day].cli_turns += entryCliPrompts;
                 } else {
                     // Entry came from the canonical account — track under its login
                     if (!stats.accountDaily[rawLogin]) stats.accountDaily[rawLogin] = {};
                     if (!stats.accountDaily[rawLogin][entry.day]) {
                         stats.accountDaily[rawLogin][entry.day] = { user_initiated: 0, code_generation: 0, code_loc: 0, doc_loc: 0, cli_turns: 0 };
                     }
-                    stats.accountDaily[rawLogin][entry.day].user_initiated += (entry.user_initiated_interaction_count || 0);
+                    stats.accountDaily[rawLogin][entry.day].user_initiated += entryChatInitiated;
                     stats.accountDaily[rawLogin][entry.day].code_generation += (entry.code_generation_activity_count || 0);
-                    stats.accountDaily[rawLogin][entry.day].cli_turns += (entry.totals_by_cli?.prompt_count || 0);
+                    stats.accountDaily[rawLogin][entry.day].cli_turns += entryCliPrompts;
                 }
             }
 
@@ -540,6 +545,29 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                 }
             }
 
+            // Treat the CLI as a virtual "IDE" so it can appear in the favorite-IDE
+            // column and the "by IDE" donut. CLI activity is not reported in
+            // totals_by_ide, so we attribute only the entry-level LOC that is NOT
+            // already accounted for by any IDE breakdown — this prevents double
+            // counting when the same day also had IDE activity.
+            if (entry.used_cli) {
+                const entryActivity = (entry.loc_added_sum || 0) + (entry.loc_deleted_sum || 0)
+                    + (entry.loc_suggested_to_add_sum || 0) + (entry.loc_suggested_to_delete_sum || 0);
+                let ideAttributedActivity = 0;
+                if (Array.isArray(entry.totals_by_ide)) {
+                    for (const ti of entry.totals_by_ide) {
+                        ideAttributedActivity += (ti.loc_added_sum || 0) + (ti.loc_deleted_sum || 0)
+                            + (ti.loc_suggested_to_add_sum || 0) + (ti.loc_suggested_to_delete_sum || 0);
+                    }
+                }
+                const cliActivity = Math.max(0, entryActivity - ideAttributedActivity);
+                if (cliActivity > 0) {
+                    stats.ides['cli'] = (stats.ides['cli'] || 0) + cliActivity;
+                    if (!stats.accountIdes[rawLogin]) stats.accountIdes[rawLogin] = { ides: {}, ideVersions: {} };
+                    stats.accountIdes[rawLogin].ides['cli'] = (stats.accountIdes[rawLogin].ides['cli'] || 0) + cliActivity;
+                }
+            }
+
             if (Array.isArray(entry.totals_by_feature)) {
                 for (const tf of entry.totals_by_feature) {
                     if (!tf.feature) continue;
@@ -657,7 +685,14 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
         }
         // Calculate percentage based on total activity (suggested + accepted) across ALL IDEs
         const totalIdeActivity = Object.values(user.ides).reduce((sum, loc) => sum + loc, 0);
-        const favIdePct = totalIdeActivity > 0 ? Math.round((favIdeLoc / totalIdeActivity) * 100) + '%' : '0%';
+        let favIdePct = totalIdeActivity > 0 ? Math.round((favIdeLoc / totalIdeActivity) * 100) + '%' : '0%';
+        // CLI-only fallback: a user may engage the CLI without producing any
+        // LOC (chat/agent requests only). If no IDE registered LOC but the CLI
+        // was used, reflect 'cli' as the environment instead of a dash.
+        if (favIde === 'None' && (user.cli_days.size > 0 || user.cli_request_count > 0)) {
+            favIde = 'cli';
+            favIdePct = '100%';
+        }
 
         let favLanguage = 'None';
         let favLanguageLoc = 0;
@@ -731,6 +766,8 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             perf_score: user.active_days.size > 0 ? Math.round(totalOutputChanged / user.active_days.size) : 0,
             favorite_model: favModel !== 'None' ? `${favModel}<br><span style="font-size:0.8em;color:var(--text-muted)">${favModelPct}</span>` : '-',
             favorite_ide: favIde !== 'None' ? `${favIde}<br><span style="font-size:0.8em;color:var(--text-muted)">${favIdePct}</span>` : '-',
+            favorite_ide_raw: favIde !== 'None' ? favIde : null,
+            favorite_ide_pct: favIde !== 'None' ? favIdePct : null,
             favorite_language: favLanguage !== 'None' ? `${favLanguage}<br><span style="font-size:0.8em;color:var(--text-muted)">${favLanguagePct}</span>` : '-',
             active_days_list: [...user.active_days].sort(),
             active_days: undefined,

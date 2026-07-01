@@ -101,13 +101,54 @@ const FUZZY_MATCH_SPREAD = 2;
 function versionToInt(v) {
     if (!v || typeof v !== 'string') return -1;
     const base = v.split('-')[0];
-    const n = parseInt(base.replace(/\./g, ''), 10);
-    return isNaN(n) ? -1 : n;
+    // Parse each dot-separated segment; skip non-numeric parts (e.g. Eclipse build qualifier "v20260601")
+    const parts = base.split('.').map(p => parseInt(p, 10)).filter(n => !isNaN(n));
+    if (!parts.length) return -1;
+    const p0 = parts[0] || 0;
+    const p1 = parts[1] || 0;
+    // Cap patch to 99999 so build-date segments like "2026061502" don't overtake a newer X.Y+1.0
+    const p2 = Math.min(parts[2] || 0, 99999);
+    return p0 * 100000000000 + p1 * 1000000 + p2;
 }
 
 // Module-level cache of the latest (max) version per IDE, per plugin, and for CLI,
 // computed from the currently filtered user set. Populated by renderDonutSection.
 let latestVersions = { ides: {}, plugins: {}, cli: -1 };
+
+// Recomputes latestVersions from the given user set (should be ALL API users, not filtered).
+function updateLatestVersions(users) {
+    const target = { ides: {}, plugins: {}, cli: -1 };
+    function _scan(ideVersionsMap) {
+        for (const [ide, v] of Object.entries(ideVersionsMap)) {
+            if (v.ide_version) {
+                const n = versionToInt(v.ide_version);
+                if (n > (target.ides[ide] ?? -1)) target.ides[ide] = n;
+            }
+            if (v.plugin && v.plugin_version) {
+                const n = versionToInt(v.plugin_version);
+                if (n > (target.plugins[v.plugin] ?? -1)) target.plugins[v.plugin] = n;
+            }
+        }
+    }
+    for (const u of users) {
+        if (u.account_ides && Object.keys(u.account_ides).length > 0) {
+            for (const acct of Object.values(u.account_ides)) {
+                if (acct.ide_versions) _scan(acct.ide_versions);
+            }
+        } else if (u.ide_versions) {
+            _scan(u.ide_versions);
+        }
+        if (u.account_cli && Object.keys(u.account_cli).length > 0) {
+            for (const cliVer of Object.values(u.account_cli)) {
+                if (cliVer) { const n = versionToInt(cliVer); if (n > target.cli) target.cli = n; }
+            }
+        } else if (u.cli_version) {
+            const n = versionToInt(u.cli_version);
+            if (n > target.cli) target.cli = n;
+        }
+    }
+    latestVersions = target;
+}
 
 // Returns true if any of the user's accounts (IDE or CLI) is below the
 // period-maximum version stored in `latestVersions`.
@@ -137,6 +178,83 @@ function userHasAnyOutdated(u) {
         if (latestVersions.cli > 0 && versionToInt(cliVer) < latestVersions.cli) return true;
     }
     return false;
+}
+
+// Returns the ide_versions entry for the user's favorite_ide, searching across all accounts.
+function getPrimaryIdeVersionInfo(u) {
+    const fav = u.favorite_ide_raw;
+    if (!fav) return null;
+    // User-level ide_versions aggregates across all accounts — simplest and most reliable.
+    if (u.ide_versions && u.ide_versions[fav]) return u.ide_versions[fav];
+    // Fallback: search per-account data.
+    if (u.account_ides) {
+        for (const acct of Object.values(u.account_ides)) {
+            const v = acct.ide_versions && acct.ide_versions[fav];
+            if (v) return v;
+        }
+    }
+    return null;
+}
+
+// Returns true if the user's primary (favorite) IDE or its plugin is outdated.
+function isPrimaryIdeOutdated(u) {
+    const fav = u.favorite_ide_raw;
+    if (!fav) return false;
+    if (fav === 'cli') {
+        if (!u.cli_version) return false;
+        return latestVersions.cli > 0 && versionToInt(u.cli_version) < latestVersions.cli;
+    }
+    const v = getPrimaryIdeVersionInfo(u);
+    if (!v) return false;
+    if (v.ide_version) {
+        const latest = latestVersions.ides[fav] ?? -1;
+        if (latest > 0 && versionToInt(v.ide_version) < latest) return true;
+    }
+    if (v.plugin && v.plugin_version) {
+        const latest = latestVersions.plugins[v.plugin] ?? -1;
+        if (latest > 0 && versionToInt(v.plugin_version) < latest) return true;
+    }
+    return false;
+}
+
+// Builds the same HTML snippet shown for the primary IDE in the user popup,
+// suitable for embedding in the custom hover tooltip.
+function buildPrimaryIdeTooltipHTML(u) {
+    const fav = u.favorite_ide_raw;
+    if (!fav) return '';
+    if (fav === 'cli') {
+        if (!u.cli_version) return '';
+        const outdated = latestVersions.cli > 0 && versionToInt(u.cli_version) < latestVersions.cli;
+        const cliDetail = u.cli_version + (outdated ? ' <span title="Not on the latest version seen in this period">⚠️ Outdated</span>' : '');
+        const cliLabel = `CLI <span style="color:var(--text-muted);font-size:0.85em">(${cliDetail})</span>`;
+        let cliHtml = `<span style="font-size:0.8em;color:var(--text-muted)"><b>IDE:</b> ${cliLabel}</span>`;
+        if (u.all_ides_list && u.all_ides_list.length > 1) {
+            cliHtml += `<div style="margin-top:6px;font-size:0.78em;color:var(--text-muted)">All IDEs: ${u.all_ides_list.join(', ')}</div>`;
+        }
+        return cliHtml;
+    }
+    const v = getPrimaryIdeVersionInfo(u);
+    if (!v) return '';
+    const detail = [];
+    if (v.ide_version) {
+        const latestN = latestVersions.ides[fav] ?? -1;
+        const outdated = latestN > 0 && versionToInt(v.ide_version) < latestN;
+        detail.push(v.ide_version + (outdated ? ' <span title="Not on the latest version seen in this period">⚠️ Outdated</span>' : ''));
+    }
+    if (v.plugin && v.plugin_version) {
+        const latestN = latestVersions.plugins[v.plugin] ?? -1;
+        const outdated = latestN > 0 && versionToInt(v.plugin_version) < latestN;
+        detail.push(`${v.plugin} ${v.plugin_version}` + (outdated ? ' <span title="Not on the latest version seen in this period">⚠️ Outdated</span>' : ''));
+    } else if (v.plugin) {
+        detail.push(v.plugin);
+    }
+    if (!detail.length) return '';
+    const ideLabel = `${fav} <span style="color:var(--text-muted);font-size:0.85em">(${detail.join(', ')})</span>`;
+    let html = `<span style="font-size:0.8em;color:var(--text-muted)"><b>IDE:</b> ${ideLabel}</span>`;
+    if (u.all_ides_list && u.all_ides_list.length > 1) {
+        html += `<div style="margin-top:6px;font-size:0.78em;color:var(--text-muted)">All IDEs: ${u.all_ides_list.join(', ')}</div>`;
+    }
+    return html;
 }
 
 const DEFAULT_STATUS_FILTER = 'active';
@@ -513,6 +631,7 @@ async function fetchDashboardData(month = '') {
         }
 
         globalUsers = data.users || [];
+        updateLatestVersions(globalUsers);
         if (Array.isArray(data.availableTeams)) {
             globalTeams = {};
             data.availableTeams.forEach(t => { globalTeams[t.id] = t; });
@@ -837,6 +956,9 @@ function renderUsersTable() {
         const revokedMark = user.revoked ? ' <span style="font-size: 0.9em;">❌</span>' : '';
         const newUserMark = (prevMonthStats && !prevRaw) ? ' <span class="diff-badge diff-new">new</span>' : '';
 
+        const primaryIdeOutdated = isPrimaryIdeOutdated(user);
+        const primaryIdeTooltipHTML = primaryIdeOutdated ? buildPrimaryIdeTooltipHTML(user) : '';
+
         // Keep user_login hidden in anonymized mode, but preserve the original rendering for easy restore.
         // <span style="font-size: 0.8em; color: var(--text-muted); font-weight: 400;">${user.team ? user.team + ' | ' : ''}${user.user_login}</span>
 
@@ -893,7 +1015,7 @@ ${(() => { const pn = user.ai_adoption_phase_number ?? 0; const prevPn = prev ? 
             </td>
             <td style="max-width: 7rem;" title="${user.all_languages_list && user.all_languages_list.length ? 'Languages: ' + user.all_languages_list.join(', ') : ''}">${user.favorite_language}</td>
             <td style="max-width: 8rem; overflow-wrap: break-word;" title="${user.all_models_list && user.all_models_list.length ? 'Models: ' + user.all_models_list.join(', ') : ''}">${user.favorite_model}</td>
-            <td style="white-space: nowrap;" title="${user.all_ides_list && user.all_ides_list.length ? 'IDEs: ' + user.all_ides_list.join(', ') : ''}">${user.favorite_ide}</td>
+            <td style="white-space: nowrap;${primaryIdeOutdated ? ' cursor:help;' : ''}" ${primaryIdeOutdated ? '' : `title="${user.all_ides_list && user.all_ides_list.length ? 'IDEs: ' + user.all_ides_list.join(', ') : ''}"`}>${(() => { const raw = user.favorite_ide_raw; const pct = user.favorite_ide_pct; if (!raw) return user.favorite_ide; const line1 = `<span style="white-space:nowrap">${raw}${primaryIdeOutdated ? '&nbsp;<span style="font-size:0.85em;pointer-events:none">⚠️</span>' : ''}</span>`; const line2 = pct && pct !== '100%' ? `<br><span style="font-size:0.8em;color:var(--text-muted)">${pct}</span>` : ''; return line1 + line2; })()}</td>
             <td style="white-space: nowrap;" title="🤖 Agent days: days where Copilot Agent mode was used&#10;💬 Chat days: days where Copilot Chat was used&#10;⌨️ CLI days: days where Copilot CLI was used&#10;🔍 Code Review days: days where Copilot reviewed code (active = user requested, passive = auto-triggered)&#10;☁️ Cloud Agent days: days where Copilot cloud agent was invoked">
                 ${user.never_active
                     ? '<span style="font-size:0.85em;color:var(--text-muted);opacity:0.7">Never used</span>'
@@ -929,6 +1051,21 @@ ${(() => { const pn = user.ai_adoption_phase_number ?? 0; const prevPn = prev ? 
         // Row click opens user detail popup
         tr.addEventListener('click', () => openUserModal(user));
 
+        // Attach IDE version tooltip to the IDE cell (col 9) when the primary IDE is outdated
+        if (primaryIdeOutdated && primaryIdeTooltipHTML) {
+            const ideCell = tr.cells[9];
+            if (ideCell) {
+                ideCell.addEventListener('mouseenter', e => {
+                    const tt = _getIdeTooltip();
+                    tt.innerHTML = `<div style="font-size:0.82rem;line-height:1.7">${primaryIdeTooltipHTML}</div>`;
+                    tt.style.display = 'block';
+                    _positionIdeTooltip(e);
+                });
+                ideCell.addEventListener('mousemove', e => _positionIdeTooltip(e));
+                ideCell.addEventListener('mouseleave', () => { _getIdeTooltip().style.display = 'none'; });
+            }
+        }
+
         // Trigger reflow
         void tr.offsetWidth;
         tr.style.opacity = '1';
@@ -963,7 +1100,8 @@ function buildUserMetaSection(user, { showIdes = true } = {}) {
         rows.push(`<div class="meta-row"><span class="meta-label">Models:</span> ${user.all_models_list.join(', ')}</div>`);
     }
     if (showIdes && ((user.all_ides_list && user.all_ides_list.length) || user.cli_version)) {
-        const ideLabels = (user.all_ides_list || []).map(ide => {
+        // 'cli' is a virtual IDE; it is rendered separately below with its CLI version.
+        const ideLabels = (user.all_ides_list || []).filter(ide => ide !== 'cli').map(ide => {
             const v = user.ide_versions && user.ide_versions[ide];
             if (v) {
                 const detail = [];
@@ -1637,48 +1775,8 @@ function renderDonutSection(filteredUsers) {
         locByDocLanguageNorm[key] = (locByDocLanguageNorm[key] || 0) + val;
     }
 
-    // ── Compute latest (max) versions across the filtered user set ──
-    // Iterates per-account data (account_ides / account_cli) so that each
-    // individual account's version is considered, not just the user-level
-    // aggregate which only retains the most-recently-dated account's version.
-    const newLatest = { ides: {}, plugins: {}, cli: -1 };
-    function _scanVersionsInto(target, ideVersionsMap) {
-        for (const [ide, v] of Object.entries(ideVersionsMap)) {
-            if (v.ide_version) {
-                const n = versionToInt(v.ide_version);
-                if (n > (target.ides[ide] ?? -1)) target.ides[ide] = n;
-            }
-            if (v.plugin && v.plugin_version) {
-                const n = versionToInt(v.plugin_version);
-                if (n > (target.plugins[v.plugin] ?? -1)) target.plugins[v.plugin] = n;
-            }
-        }
-    }
-    for (const u of filteredUsers) {
-        // Prefer per-account granularity; fall back to user-level if absent
-        if (u.account_ides && Object.keys(u.account_ides).length > 0) {
-            for (const acct of Object.values(u.account_ides)) {
-                if (acct.ide_versions) _scanVersionsInto(newLatest, acct.ide_versions);
-            }
-        } else if (u.ide_versions) {
-            _scanVersionsInto(newLatest, u.ide_versions);
-        }
-        // CLI: check per-account versions
-        if (u.account_cli && Object.keys(u.account_cli).length > 0) {
-            for (const cliVer of Object.values(u.account_cli)) {
-                if (cliVer) {
-                    const n = versionToInt(cliVer);
-                    if (n > newLatest.cli) newLatest.cli = n;
-                }
-            }
-        } else if (u.cli_version) {
-            const n = versionToInt(u.cli_version);
-            if (n > newLatest.cli) newLatest.cli = n;
-        }
-    }
-    latestVersions = newLatest;
-
     // ── Version-status donut: Newest vs Outdated (per-account check) ──
+    // latestVersions is already set from globalUsers in fetchDashboardData.
     // userHasAnyOutdated is a module-level function that reads latestVersions.
     let newestCount = 0, outdatedCount = 0;
     for (const u of filteredUsers) {
@@ -1757,6 +1855,32 @@ function _positionMaturityTooltip(e) {
     const vh = window.innerHeight;
     const tw = tt.offsetWidth || 380;
     const th = tt.offsetHeight || 100;
+    let x = e.clientX + 18;
+    let y = e.clientY + 14;
+    if (x + tw > vw - 8) x = e.clientX - tw - 8;
+    if (y + th > vh - 8) y = e.clientY - th - 8;
+    tt.style.left = x + 'px';
+    tt.style.top  = y + 'px';
+}
+
+let _ideTooltipEl = null;
+
+function _getIdeTooltip() {
+    if (!_ideTooltipEl) {
+        _ideTooltipEl = document.createElement('div');
+        _ideTooltipEl.className = 'maturity-tooltip';
+        _ideTooltipEl.style.display = 'none';
+        document.body.appendChild(_ideTooltipEl);
+    }
+    return _ideTooltipEl;
+}
+
+function _positionIdeTooltip(e) {
+    const tt = _getIdeTooltip();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const tw = tt.offsetWidth || 300;
+    const th = tt.offsetHeight || 80;
     let x = e.clientX + 18;
     let y = e.clientY + 14;
     if (x + tw > vw - 8) x = e.clientX - tw - 8;

@@ -203,7 +203,7 @@ The AI model that generated the largest share of the user's code LOC, with the p
 
 ### IDE
 
-The development environment that handled the most of the user's LOC, with the percentage shown underneath. Hover to see all IDEs used. Exact IDE version is available in user details pop-up.
+The development environment that handled the most of the user's LOC, with the percentage shown underneath. The Copilot **CLI** is treated as a virtual IDE (shown as `cli`), so a user who produces most of their LOC via the CLI shows `cli` here instead of a dash. Hover to see all IDEs used. Exact IDE version is available in user details pop-up.
 
 ---
 
@@ -263,7 +263,7 @@ Share of **all LOC** (code + steering) broken down by GHCP feature: `inline`, `c
 
 ### by IDE
 
-Share of **all LOC** handled by each IDE (VS Code, JetBrains, Neovim, etc.).
+Share of **all LOC** handled by each IDE (VS Code, JetBrains, Neovim, etc.). The Copilot **CLI** appears as its own `cli` slice, counting only LOC that is not already attributed to an IDE, so there is no double counting.
 
 ---
 
