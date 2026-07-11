@@ -482,6 +482,7 @@ document.addEventListener('DOMContentLoaded', () => {
         currentScopeFilter = e.target.value;
         updateUrlFromCurrentState();
         renderUsersTable();
+        renderDAUChart();
     });
 
     document.getElementById('status-filter').addEventListener('change', (e) => {
@@ -494,6 +495,7 @@ document.addEventListener('DOMContentLoaded', () => {
         currentManagerFilter = e.target.value;
         updateUrlFromCurrentState();
         renderUsersTable();
+        renderDAUChart();
     });
 
     document.getElementById('user-search').addEventListener('input', (e) => {
@@ -1446,10 +1448,23 @@ function renderDAUChart() {
     const container = document.getElementById('dau-chart-container');
     if (!container) return;
     if (!globalUsers.length) { container.innerHTML = ''; return; }
-    const filteredUsers = globalUsers.filter(u => !u.revoked && (!currentTeamFilter ||
+    let filteredUsers = globalUsers.filter(u => !u.revoked && (!currentTeamFilter ||
         (currentTeamFilter.startsWith('unit:')
             ? globalTeams[u.team]?.unit === currentTeamFilter.slice(5)
             : u.team === currentTeamFilter)));
+    if (currentScopeFilter) {
+        const colonIdx = currentScopeFilter.indexOf(':');
+        const scopeType = currentScopeFilter.slice(0, colonIdx);
+        const scopeId   = currentScopeFilter.slice(colonIdx + 1);
+        if (scopeType === 'e') {
+            filteredUsers = filteredUsers.filter(u => Array.isArray(u.enterprise_ids) && u.enterprise_ids.includes(scopeId));
+        } else if (scopeType === 'o') {
+            filteredUsers = filteredUsers.filter(u => Array.isArray(u.organization_ids) && u.organization_ids.includes(scopeId));
+        }
+    }
+    if (currentManagerFilter !== '') {
+        filteredUsers = filteredUsers.filter(u => u.team_manager === currentManagerFilter);
+    }
     container.innerHTML = buildDAUChart(filteredUsers, filteredUsers.length, currentMonthFilter);
     const avgStat = document.getElementById('dau-avg-stat');
     if (avgStat) {
