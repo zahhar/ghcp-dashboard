@@ -277,6 +277,11 @@ function isMonthToken(value) {
     return /^\d{4}-\d{2}$/.test(value || '');
 }
 
+function getCurrentMonthToken() {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
 function hasOption(selectEl, value) {
     return Array.from(selectEl.options).some(opt => opt.value === value);
 }
@@ -314,6 +319,11 @@ function parseStateFromUrl() {
 
     let team = '';
     let month = '';
+    const defaultedToCurrentMonth = segments.length === 0 && url.search === '' && url.hash === '';
+
+    if (defaultedToCurrentMonth) {
+        month = getCurrentMonthToken();
+    }
 
     if (segments.length === 1) {
         if (isMonthToken(segments[0])) month = segments[0];
@@ -343,7 +353,8 @@ function parseStateFromUrl() {
         status: url.searchParams.get('status') || DEFAULT_STATUS_FILTER,
         manager: url.searchParams.get('manager') || '',
         sort: url.searchParams.get('sort') || DEFAULT_SORT_COLUMN,
-        desc
+        desc,
+        defaultedToCurrentMonth
     });
 }
 
@@ -454,20 +465,30 @@ function getDisplayedCreditLicenses(user) {
 }
 
 function buildCreditLicenseCell(license) {
+    const label = license.organization_label || license.enterprise_label || license.login;
+    const tooltip = `${license.login} · ${label}\nLatest month: ${license.latest_month || '-'}, observed through day ${license.observed_through_day || '-'}`;
+
+    // All-time totals span multiple monthly budgets, so only show actual consumption.
+    if (!currentMonthFilter) {
+        return `<div class="credits-license" title="${tooltip}">
+            <div class="credits-license-head"><span>${formatCredits(license.used)}</span></div>
+        </div>`;
+    }
+
     const pct = license.period_percent;
     const budgetText = pct == null
         ? ' (budget not configured)'
         : `/${formatCredits(license.period_budget)} (${Math.round(pct)}%)`;
     const progress = pct == null ? 0 : Math.min(100, Math.max(0, pct));
-    const forecastText = license.budget_sufficient == null
+    const isPastMonth = currentMonthFilter < getCurrentMonthToken();
+    const forecastText = isPastMonth || license.budget_sufficient == null
         ? ''
         : `${license.budget_sufficient ? '✓' : '⚠'} ${formatCredits(license.projected_month_used)} (${Math.round(license.projected_percent)}%) <span class="credits-forecast-label">fcst</span>`;
-    const label = license.organization_label || license.enterprise_label || license.login;
     const stateClass = license.budget_sufficient === false ? 'credits-risk' : 'credits-ok';
-    return `<div class="credits-license" title="${license.login} · ${label}\nLatest month: ${license.latest_month || '-'}, observed through day ${license.observed_through_day || '-'}">
+    return `<div class="credits-license" title="${tooltip}">
         <div class="credits-license-head"><span>${formatCredits(license.used)}</span><span class="credits-budget-tail">${budgetText}</span></div>
         <div class="credits-progress"><span style="width:${progress}%"></span></div>
-        <div class="credits-license-foot ${stateClass}">${forecastText}</div>
+        ${forecastText ? `<div class="credits-license-foot ${stateClass}">${forecastText}</div>` : ''}
     </div>`;
 }
 
@@ -495,7 +516,9 @@ function formatLocPair(label, value) {
 let currentMonthFilter = '';
 
 document.addEventListener('DOMContentLoaded', () => {
-    applyStateToGlobals(parseStateFromUrl());
+    const initialState = parseStateFromUrl();
+    applyStateToGlobals(initialState);
+    if (initialState.defaultedToCurrentMonth) updateUrlFromCurrentState();
     syncControlsFromState();
 
     fetchDashboardData(currentMonthFilter);
@@ -544,6 +567,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const nextState = parseStateFromUrl();
         const monthChanged = nextState.month !== currentMonthFilter;
         applyStateToGlobals(nextState);
+        if (nextState.defaultedToCurrentMonth) updateUrlFromCurrentState();
         syncControlsFromState();
 
         if (monthChanged) {
