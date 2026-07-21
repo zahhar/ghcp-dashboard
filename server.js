@@ -183,11 +183,15 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
     const orgLabelMap = {};
     const enterpriseFilterKnownUsersMap = {};
     const orgFilterKnownUsersMap = {};
+    const enterpriseMonthlyCreditsMap = {};
     const preferredEnterpriseIds = [];
     if (Array.isArray(config.enterprises)) {
         for (const e of config.enterprises) {
             if (e.id != null) enterpriseLabelMap[String(e.id)] = e.label || e.slug || String(e.id);
             if (e.id != null) enterpriseFilterKnownUsersMap[String(e.id)] = e.filter_to_known_users === true;
+            if (e.id != null && Number.isFinite(Number(e.monthly_ai_credits_per_user))) {
+                enterpriseMonthlyCreditsMap[String(e.id)] = Number(e.monthly_ai_credits_per_user);
+            }
             if (e.id != null && e.preferred_license === true) preferredEnterpriseIds.push(String(e.id));
             if (Array.isArray(e.organizations)) {
                 for (const o of e.organizations) {
@@ -205,6 +209,7 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
 
     const userStats = {};
     const availableMonths = new Set();
+    const reportThroughDayByScopeMonth = {};
 
     if (!cachedParsedData) {
         let parsedData = [];
@@ -275,6 +280,14 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                 continue;
             }
 
+            const licenseScope = organizationId ? `o:${organizationId}` : `e:${enterpriseId || 'unknown'}`;
+            if (entry.day) {
+                const scopeMonthKey = `${licenseScope}|${entry.day.slice(0, 7)}`;
+                if (!reportThroughDayByScopeMonth[scopeMonthKey] || entry.day > reportThroughDayByScopeMonth[scopeMonthKey]) {
+                    reportThroughDayByScopeMonth[scopeMonthKey] = entry.day;
+                }
+            }
+
             if (!userStats[user]) {
                 userStats[user] = {
                     user_login: user,
@@ -312,6 +325,7 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                     code_loc_from_models: 0,
                     daily: {},
                     accountDaily: {},  // { [login]: { [day]: { user_initiated, code_generation, cli_turns, code_loc, doc_loc } } }
+                    licenseDaily: {},  // { [account|org]: { login, enterprise_id, organization_id, daily: { [day]: {..., ai_credits_used} } } }
                     accountIdes: {},   // { [login]: { ides: {name:loc}, ideVersions: {name:{...}} } }
                     accountCli: {},    // { [login]: { cli_version, last_seen_day } }
                     accountEnterpriseIds: {}, // { [login]: Set<enterprise_id> }
@@ -331,6 +345,24 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             }
 
             const stats = userStats[user];
+            // A license stream is scoped to the actual account and organization. Enterprise is
+            // the fallback when organization_id is unavailable. This intentionally keeps two
+            // licenses owned by the same canonical user separate.
+            const licenseKey = `${rawLogin}|${licenseScope}`;
+            if (!stats.licenseDaily[licenseKey]) {
+                stats.licenseDaily[licenseKey] = {
+                    login: rawLogin,
+                    enterprise_id: enterpriseId,
+                    organization_id: organizationId,
+                    daily: {}
+                };
+            }
+            const license = stats.licenseDaily[licenseKey];
+            if (entry.day && !license.daily[entry.day]) {
+                license.daily[entry.day] = { user_initiated: 0, code_generation: 0, code_loc: 0, doc_loc: 0, cli_turns: 0, ai_credits_used: 0 };
+            }
+            const licenseDay = entry.day ? license.daily[entry.day] : null;
+
             stats.user_initiated_interaction_count += (entry.user_initiated_interaction_count || 0);
             if (entry.enterprise_id != null) stats.enterprise_ids.add(String(entry.enterprise_id));
             if (entry.organization_id != null) stats.organization_ids.add(String(entry.organization_id));
@@ -365,6 +397,10 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                 stats.daily[entry.day].user_initiated += entryChatInitiated;
                 stats.daily[entry.day].code_generation += (entry.code_generation_activity_count || 0);
                 stats.daily[entry.day].cli_turns += entryCliPrompts;
+                licenseDay.user_initiated += entryChatInitiated;
+                licenseDay.code_generation += (entry.code_generation_activity_count || 0);
+                licenseDay.cli_turns += entryCliPrompts;
+                licenseDay.ai_credits_used += Number(entry.ai_credits_used) || 0;
 
                 // Per-account daily tracking (rawLogin is the actual account login)
                 if (rawLogin !== user) {
@@ -418,6 +454,10 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                 if (entry.day && stats.accountDaily[rawLogin] && stats.accountDaily[rawLogin][entry.day]) {
                     stats.accountDaily[rawLogin][entry.day].doc_loc += entryDocLoc;
                     stats.accountDaily[rawLogin][entry.day].code_loc += entryTotalLoc - entryDocLoc;
+                }
+                if (licenseDay) {
+                    licenseDay.doc_loc += entryDocLoc;
+                    licenseDay.code_loc += entryTotalLoc - entryDocLoc;
                 }
             }
 
@@ -725,6 +765,64 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
         const enterpriseLabel = enterpriseIds.map(id => enterpriseLabelMap[id] || id).join(', ');
         const organizationLabel = organizationIds.map(id => orgLabelMap[id] || id).join(', ');
 
+        const aiCreditLicenses = Object.entries(user.licenseDaily).map(([licenseId, license]) => {
+            const daily = Object.entries(license.daily)
+                .sort(([a], [b]) => a.localeCompare(b))
+                .map(([day, d]) => ({
+                    day,
+                    user_initiated: d.user_initiated,
+                    code_generation: d.code_generation,
+                    cli_turns: d.cli_turns,
+                    code_loc: d.code_loc,
+                    doc_loc: d.doc_loc,
+                    ai_credits_used: d.ai_credits_used
+                }));
+            const months = [...new Set(daily.map(d => d.day.slice(0, 7)))].sort();
+            const monthlyBudget = license.enterprise_id
+                ? (enterpriseMonthlyCreditsMap[license.enterprise_id] ?? null)
+                : null;
+            const used = daily.reduce((sum, d) => sum + d.ai_credits_used, 0);
+            const periodBudget = monthlyBudget == null ? null : monthlyBudget * months.length;
+            const periodPercent = periodBudget > 0 ? used / periodBudget * 100 : null;
+            const latestMonth = months.at(-1) || null;
+            const latestMonthDays = latestMonth ? daily.filter(d => d.day.startsWith(latestMonth)) : [];
+            const latestMonthUsed = latestMonthDays.reduce((sum, d) => sum + d.ai_credits_used, 0);
+            const licenseScope = license.organization_id
+                ? `o:${license.organization_id}`
+                : `e:${license.enterprise_id || 'unknown'}`;
+            const reportThroughDay = latestMonth
+                ? reportThroughDayByScopeMonth[`${licenseScope}|${latestMonth}`] || null
+                : null;
+            const observedThroughDay = reportThroughDay ? Number(reportThroughDay.slice(8, 10)) : 0;
+            const [latestYear, latestMonthNumber] = latestMonth ? latestMonth.split('-').map(Number) : [0, 0];
+            const daysInMonth = latestMonth ? new Date(latestYear, latestMonthNumber, 0).getDate() : 0;
+            const projectedMonthUsed = observedThroughDay > 0
+                ? latestMonthUsed / observedThroughDay * daysInMonth
+                : 0;
+
+            return {
+                id: licenseId,
+                login: license.login,
+                enterprise_id: license.enterprise_id,
+                enterprise_label: enterpriseLabelMap[license.enterprise_id] || license.enterprise_id || '',
+                organization_id: license.organization_id,
+                organization_label: orgLabelMap[license.organization_id] || license.organization_id || '',
+                monthly_budget: monthlyBudget,
+                selected_months: months.length,
+                used,
+                period_budget: periodBudget,
+                period_percent: periodPercent,
+                latest_month: latestMonth,
+                latest_month_used: latestMonthUsed,
+                observed_through_day: observedThroughDay,
+                days_in_month: daysInMonth,
+                projected_month_used: projectedMonthUsed,
+                projected_percent: monthlyBudget > 0 ? projectedMonthUsed / monthlyBudget * 100 : null,
+                budget_sufficient: monthlyBudget == null ? null : projectedMonthUsed <= monthlyBudget,
+                daily
+            };
+        });
+
         return {
             ...user,
             human_name: humanName,
@@ -738,6 +836,8 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             organization_ids: organizationIds,
             enterprise_label: enterpriseLabel,
             organization_label: organizationLabel,
+            ai_credit_licenses: aiCreditLicenses,
+            ai_credits_sort_value: Math.max(0, ...aiCreditLicenses.map(l => l.period_percent ?? l.used)),
             total_loc_changed: totalLocChanged,
             total_loc_added: totalLocAdded,
             total_loc_deleted: totalLocDeleted,
@@ -833,6 +933,7 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             ideVersions: undefined,
             cli_version_info: undefined,
             accountDaily: undefined,
+            licenseDaily: undefined,
             account_ides: Object.fromEntries(
                 Object.entries(user.accountIdes).map(([login, a]) => [login, {
                     ides: Object.keys(a.ides).sort(),
@@ -906,6 +1007,8 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             account_daily: {},
             account_enterprise_ids: {},
             account_enterprise_labels: {},
+            ai_credit_licenses: [],
+            ai_credits_sort_value: 0,
             loc_by_model: {}, loc_by_language: {}, loc_by_code_language: {},
             loc_by_doc_language: {}, loc_by_feature: {}, loc_by_ide: {},
         });
@@ -943,12 +1046,22 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
     });
 
     const { flat: watchModelUse, groups: watchModelUseGroups } = normalizeWatchModelUse(config.watch_model_use);
+    const allCreditLicenses = results.flatMap(user => user.ai_credit_licenses || []);
+    const totalAiCreditsUsed = allCreditLicenses.reduce((sum, license) => sum + license.used, 0);
+    const totalAiCreditsBudget = allCreditLicenses.reduce(
+        (sum, license) => sum + (license.period_budget == null ? 0 : license.period_budget), 0);
 
     return {
         users: allUsers,
         totalUsers: results.length,
         totalInteractions: results.reduce((acc, user) => acc + user.turns, 0),
         totalOrgLocChanged: totalOrgLocChanged,
+        aiCredits: {
+            used: totalAiCreditsUsed,
+            budget: totalAiCreditsBudget,
+            percent: totalAiCreditsBudget > 0 ? totalAiCreditsUsed / totalAiCreditsBudget * 100 : null,
+            license_count: allCreditLicenses.length
+        },
         availableMonths: orderedMonths,
         availableTeams,
         availableEnterprises,
@@ -1012,6 +1125,7 @@ const server = http.createServer(async (req, res) => {
                     for (const u of prevData.users) {
                         prevMap[u.user_login] = {
                             total_loc_changed: u.total_loc_changed,
+                            total_suggested_changed: u.total_suggested_changed,
                             code_loc_changed: u.code_loc_changed,
                             avg_loc_added_daily: u.avg_loc_added_daily,
                             perf_score: u.perf_score,
@@ -1019,6 +1133,11 @@ const server = http.createServer(async (req, res) => {
                             config_loc_changed: u.config_loc_changed,
                             turns: u.turns,
                             active_days_count: u.active_days_count,
+                            ai_credit_licenses: (u.ai_credit_licenses || []).map(license => ({
+                                enterprise_id: license.enterprise_id,
+                                organization_id: license.organization_id,
+                                used: license.used
+                            })),
                             ai_adoption_phase_number: u.ai_adoption_phase_number ?? null
                         };
                     }

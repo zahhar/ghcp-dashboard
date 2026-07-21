@@ -9,6 +9,7 @@
       "missing_data_days": [],
       "filter_to_known_users": true,
       "preferred_license": true,
+      "monthly_ai_credits_per_user": 10000,
       "organizations": [
         {
           "id": "200001",
@@ -24,7 +25,8 @@
     {
       "id": "100002",
       "label": "Vendor Enterprise",
-      "filter_to_known_users": false
+      "filter_to_known_users": false,
+      "monthly_ai_credits_per_user": 10000
     }
   ],
   "watch_model_use": {

@@ -261,18 +261,15 @@ const DEFAULT_STATUS_FILTER = 'active';
 const DEFAULT_SORT_COLUMN = 'total_output';
 const DEFAULT_SORT_DESC = true;
 const SORT_MAPPING = {
-    0: null, // # is not sortable
-    1: 'human_name',
-    2: 'total_output',
-    3: 'turns',
-    4: 'doc_loc_changed',
-    5: 'code_loc_changed',
-    6: 'perf_score',
-    7: 'favorite_language',
-    8: 'favorite_model',
-    9: 'favorite_ide',
-    10: 'active_days_count',
-    11: 'last_active_day'
+    0: 'human_name',
+    1: 'total_output',
+    2: 'doc_loc_changed',
+    3: 'code_loc_changed',
+    4: 'turns',
+    5: 'perf_score',
+    6: 'ai_credits_sort_value',
+    7: null, // consolidated Environment column is not sortable
+    8: 'last_active_day'
 };
 const SORTABLE_COLUMNS = new Set(Object.values(SORT_MAPPING).filter(Boolean));
 
@@ -439,6 +436,45 @@ function formatNumber(num) {
     return num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, "'");
 }
 
+function formatCredits(value) {
+    return formatNumber(Math.round(Number(value) || 0));
+}
+
+function getVisibleCreditLicenses(user) {
+    const licenses = Array.isArray(user.ai_credit_licenses) ? user.ai_credit_licenses : [];
+    if (!currentScopeFilter) return licenses;
+    const [scopeType, scopeId] = currentScopeFilter.split(':');
+    if (scopeType === 'e') return licenses.filter(l => String(l.enterprise_id) === scopeId);
+    if (scopeType === 'o') return licenses.filter(l => String(l.organization_id) === scopeId);
+    return licenses;
+}
+
+function getDisplayedCreditLicenses(user) {
+    return getVisibleCreditLicenses(user).filter(license => (Number(license.used) || 0) > 0);
+}
+
+function buildCreditLicenseCell(license) {
+    const pct = license.period_percent;
+    const budgetText = pct == null
+        ? ' (budget not configured)'
+        : `/${formatCredits(license.period_budget)} (${Math.round(pct)}%)`;
+    const progress = pct == null ? 0 : Math.min(100, Math.max(0, pct));
+    const forecastText = license.budget_sufficient == null
+        ? ''
+        : `${license.budget_sufficient ? '✓' : '⚠'} ${formatCredits(license.projected_month_used)} (${Math.round(license.projected_percent)}%) <span class="credits-forecast-label">fcst</span>`;
+    const label = license.organization_label || license.enterprise_label || license.login;
+    const stateClass = license.budget_sufficient === false ? 'credits-risk' : 'credits-ok';
+    return `<div class="credits-license" title="${license.login} · ${label}\nLatest month: ${license.latest_month || '-'}, observed through day ${license.observed_through_day || '-'}">
+        <div class="credits-license-head"><span>${formatCredits(license.used)}</span><span class="credits-budget-tail">${budgetText}</span></div>
+        <div class="credits-progress"><span style="width:${progress}%"></span></div>
+        <div class="credits-license-foot ${stateClass}">${forecastText}</div>
+    </div>`;
+}
+
+function compactFavorite(value) {
+    return String(value || '—').replace(/<br>\s*/g, '&nbsp;');
+}
+
 // Format large token counts: round to nearest 10K, display as e.g. 120K, 1.25M, 2B
 function formatTokens(n) {
     if (!n) return null;
@@ -536,6 +572,10 @@ async function fetchDashboardData(month = '') {
         document.getElementById('stat-total-interactions').textContent = formatNumber(data.totalInteractions);
         if (data.totalOrgLocChanged !== undefined) {
             document.getElementById('stat-total-loc').textContent = formatNumber(data.totalOrgLocChanged);
+        }
+        if (data.aiCredits) {
+            document.getElementById('stat-ai-credits').textContent = formatCredits(data.aiCredits.used);
+            document.getElementById('stat-ai-credits-detail').textContent = '';
         }
 
         // Populate month dropdown if present in response and not populated yet
@@ -657,7 +697,7 @@ async function fetchDashboardData(month = '') {
 
     } catch (error) {
         console.error('Error fetching stats:', error);
-        document.getElementById('users-body').innerHTML = `<tr><td colspan="12" class="loading">Failed to load data. Make sure backend is running.</td></tr>`;
+        document.getElementById('users-body').innerHTML = `<tr><td colspan="9" class="loading">Failed to load data. Make sure backend is running.</td></tr>`;
     }
 }
 
@@ -715,11 +755,11 @@ function localISODate(dt) {
     return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
 }
 
-function getFriendlyDate(dateString) {
-    if (!dateString) return '-';
+function getFriendlyDateInfo(dateString) {
+    if (!dateString) return { formattedDate: '-', relativeStr: 'never' };
     // dateString format is assumed to be YYYY-MM-DD
     const parts = dateString.split('-');
-    if (parts.length !== 3) return dateString;
+    if (parts.length !== 3) return { formattedDate: dateString, relativeStr: '?' };
     const formattedDate = `${parts[2]}.${parts[1]}.${parts[0]}`;
 
     // Calculate relative string
@@ -742,7 +782,7 @@ function getFriendlyDate(dateString) {
     else if (diffDays >= 30) relativeStr = '1+ month ago';
     else relativeStr = '?';
 
-    return `${formattedDate}<br><span style="font-size:0.8em;color:var(--text-muted)">Active ${relativeStr}</span>`;
+    return { formattedDate, relativeStr };
 }
 
 function setupTableSorting() {
@@ -767,12 +807,11 @@ function setupTableSorting() {
     updateHeaders(); // initial state
 
     headers.forEach((th, index) => {
+        const prop = SORT_MAPPING[index];
+        if (!prop) return;
         th.style.cursor = 'pointer';
         th.title = "Click to sort";
         th.addEventListener('click', () => {
-            const prop = SORT_MAPPING[index];
-            if (!prop) return;
-
             // Toggle sort direction if clicking same column
             if (currentSortColumn === prop) {
                 currentSortDesc = !currentSortDesc;
@@ -899,9 +938,12 @@ function renderUsersTable() {
     document.getElementById('stat-total-users').textContent = formatNumber(sortedUsers.length);
     document.getElementById('stat-total-interactions').textContent = formatNumber(filteredInteractions);
     document.getElementById('stat-total-loc').textContent = formatNumber(filteredOutput);
+    const filteredCreditLicenses = sortedUsers.flatMap(getVisibleCreditLicenses);
+    const filteredCreditsUsed = filteredCreditLicenses.reduce((sum, l) => sum + (l.used || 0), 0);
+    document.getElementById('stat-ai-credits').textContent = formatCredits(filteredCreditsUsed);
 
     // Update header diff badges — compute prev totals from same filtered user set
-    let prevFilteredUsers = 0, prevFilteredInteractions = 0, prevFilteredLoc = 0;
+    let prevFilteredUsers = 0, prevFilteredInteractions = 0, prevFilteredLoc = 0, prevFilteredCredits = 0;
     if (prevMonthStats) {
         for (const u of sortedUsers) {
             const p = prevMonthStats[u.user_login];
@@ -909,12 +951,14 @@ function renderUsersTable() {
                 prevFilteredUsers++;
                 prevFilteredInteractions += p.turns || 0;
                 prevFilteredLoc += (p.total_suggested_changed || 0) + (p.total_loc_changed || 0);
+                prevFilteredCredits += getVisibleCreditLicenses(p).reduce((sum, license) => sum + (license.used || 0), 0);
             }
         }
     }
     document.getElementById('stat-diff-users').innerHTML = prevMonthStats ? diffAbsBadge(sortedUsers.length, prevFilteredUsers) : '';
     document.getElementById('stat-diff-interactions').innerHTML = prevMonthStats ? diffBadge(filteredInteractions, prevFilteredInteractions, true) : '';
     document.getElementById('stat-diff-loc').innerHTML = prevMonthStats ? diffBadge(filteredOutput, prevFilteredLoc, true) : '';
+    document.getElementById('stat-ai-credits-detail').innerHTML = prevMonthStats ? diffBadge(filteredCreditsUsed, prevFilteredCredits, true) : '';
 
     // Sort logic — never-active users always sink to the bottom regardless of column
     if (currentSortColumn !== 'rank') {
@@ -924,6 +968,10 @@ function renderUsersTable() {
 
             let valA = currentSortColumn === 'total_output' ? (a.total_suggested_changed + a.total_loc_changed) : a[currentSortColumn];
             let valB = currentSortColumn === 'total_output' ? (b.total_suggested_changed + b.total_loc_changed) : b[currentSortColumn];
+            if (currentSortColumn === 'ai_credits_sort_value') {
+                valA = Math.max(0, ...getVisibleCreditLicenses(a).map(l => l.period_percent ?? l.used));
+                valB = Math.max(0, ...getVisibleCreditLicenses(b).map(l => l.period_percent ?? l.used));
+            }
 
             // string vs number comparisons
             if (typeof valA === 'string' && typeof valB === 'string') {
@@ -942,7 +990,6 @@ function renderUsersTable() {
     renderMaturitySection(sortedUsers);
 
     sortedUsers.forEach((user, idx) => {
-        const lineNumber = idx + 1;
         const tr = document.createElement('tr');
         const prevRaw = prevMonthStats ? prevMonthStats[user.user_login] : null;
         // Never-active users show no diff badges; only the "new" label is allowed (handled separately below)
@@ -960,14 +1007,13 @@ function renderUsersTable() {
 
         const primaryIdeOutdated = isPrimaryIdeOutdated(user);
         const primaryIdeTooltipHTML = primaryIdeOutdated ? buildPrimaryIdeTooltipHTML(user) : '';
+        const activityDate = getFriendlyDateInfo(user.last_active_day);
+        const activityStreak = computeCurrentStreak(user.active_days_list, user.last_active_day);
 
         // Keep user_login hidden in anonymized mode, but preserve the original rendering for easy restore.
         // <span style="font-size: 0.8em; color: var(--text-muted); font-weight: 400;">${user.team ? user.team + ' | ' : ''}${user.user_login}</span>
 
         tr.innerHTML = `
-            <td style="color: var(--text-muted); font-size: 0.9em;">
-                ${lineNumber}
-            </td>
             <td>
                 <div class="user-cell" style="white-space: nowrap; flex-direction: column; align-items: flex-start; gap: 0.1rem;">
                     <span style="font-weight: 600;">${user.human_name}${revokedMark}${newUserMark}</span>
@@ -985,15 +1031,6 @@ function renderUsersTable() {
                 <span style="font-size:0.8em;color:var(--text-muted)">✏️ ${formatNumber(user.total_loc_changed)}</span>
                 ${formatTokens(user.cli_output_tokens_sum) ? `<br><span style="font-size:0.8em;color:var(--text-muted)">🔤 ${formatTokens(user.cli_output_tokens_sum)}</span>` : ''}
             </td>
-            <!-- Turns: total interactions | 🏃 code generation activity count | 🎯 code acceptance activity count -->
-            <td title="Total interaction turns (user_initiated + cli_requests)&#10;🏃 Code generation activity count&#10;🎯 Code acceptance activity count">
-                <span class="metric-high" style="font-size: 1.1em;">${formatNumber(user.turns)}</span>
-                ${prev ? diffBadge(user.turns, prev.turns, true) : ''}
-                <br>
-                <span style="font-size:0.8em;color:var(--text-muted)">🏃\u202f${formatNumber(user.code_generation_activity_count)}</span>
-                <br>
-                <span style="font-size:0.8em;color:var(--text-muted)">🎯 ${formatNumber(user.code_acceptance_activity_count)}</span>
-            </td>
             <td style="white-space: nowrap;" title="Steering Output = Steering Suggested + Steering Applied&#10;Steering Suggested = Σ(loc_suggested_to_add + loc_suggested_to_delete) for documentation/prompt languages&#10;Steering Applied = Σ(loc_added + loc_deleted) for documentation/prompt languages${user.all_doc_languages_list && user.all_doc_languages_list.length ? '&#10;Doc languages: ' + user.all_doc_languages_list.join(', ') : ''}">
                 ${formatNumber(user.doc_loc_changed)}
                 ${prev ? diffArrowOnly(user.doc_loc_changed, prev.doc_loc_changed) : ''}
@@ -1010,33 +1047,44 @@ function renderUsersTable() {
                 <br>
                 <span style="font-size:0.8em;color:var(--text-muted)">${formatLocPair('✏️', user.code_loc_applied)}</span>
             </td>
+            <!-- Turns: total interactions | 🏃 code generation activity count | 🎯 code acceptance activity count -->
+            <td title="Total interaction turns (user_initiated + cli_requests)&#10;🏃 Code generation activity count&#10;🎯 Code acceptance activity count">
+                <span class="metric-with-diff"><span style="font-size: 1.1em;">${formatNumber(user.turns)}</span>${prev ? diffBadge(user.turns, prev.turns, true) : ''}</span>
+                <br>
+                <span style="font-size:0.8em;color:var(--text-muted)">🏃\u202f${formatNumber(user.code_generation_activity_count)}</span>
+                <br>
+                <span style="font-size:0.8em;color:var(--text-muted)">🎯 ${formatNumber(user.code_acceptance_activity_count)}</span>
+            </td>
             <td style="white-space: nowrap;" title="PERF = Total Output / active days&#10;Total Output = Suggested LOC + Applied LOC&#10;Suggested LOC = loc_suggested_to_add + loc_suggested_to_delete&#10;Applied LOC = loc_added + loc_deleted&#10;${formatNumber(user.perf_score)} loc/day">
                 <span>${formatNumber(user.perf_score)}</span>
                 ${prev ? diffBadge(user.perf_score, prev.perf_score, true) : ''}
 ${(() => { const pn = user.ai_adoption_phase_number ?? 0; const prevPn = prev ? (prev.ai_adoption_phase_number ?? null) : null; const changed = prevPn !== null && prevPn !== pn; return `<br><span style="font-size:0.75em;color:var(--text-muted);cursor:help" title="${PHASE_DESCRIPTIONS[pn] || ''}">${PHASE_LABELS[pn] || ('Phase ' + pn)}${changed ? ' ' + (pn > prevPn ? '<span class="diff-badge diff-up">▲</span>' : '<span class="diff-badge diff-down">▼</span>') : ''}</span>`; })()}
             </td>
-            <td style="max-width: 7rem;" title="${user.all_languages_list && user.all_languages_list.length ? 'Languages: ' + user.all_languages_list.join(', ') : ''}">${user.favorite_language}</td>
-            <td style="max-width: 8rem; overflow-wrap: break-word;" title="${user.all_models_list && user.all_models_list.length ? 'Models: ' + user.all_models_list.join(', ') : ''}">${user.favorite_model}</td>
-            <td style="white-space: nowrap;${primaryIdeOutdated ? ' cursor:help;' : ''}" ${primaryIdeOutdated ? '' : `title="${user.all_ides_list && user.all_ides_list.length ? 'IDEs: ' + user.all_ides_list.join(', ') : ''}"`}>${(() => { const raw = user.favorite_ide_raw; const pct = user.favorite_ide_pct; if (!raw) return user.favorite_ide; const line1 = `<span style="white-space:nowrap">${raw}${primaryIdeOutdated ? '&nbsp;<span style="font-size:0.85em;pointer-events:none">⚠️</span>' : ''}</span>`; const line2 = pct && pct !== '100%' ? `<br><span style="font-size:0.8em;color:var(--text-muted)">${pct}</span>` : ''; return line1 + line2; })()}</td>
-            <td style="white-space: nowrap;" title="🤖 Agent days: days where Copilot Agent mode was used&#10;💬 Chat days: days where Copilot Chat was used&#10;⌨️ CLI days: days where Copilot CLI was used&#10;🔍 Code Review days: days where Copilot reviewed code (active = user requested, passive = auto-triggered)&#10;☁️ Cloud Agent days: days where Copilot cloud agent was invoked">
-                ${user.never_active
-                    ? '<span style="font-size:0.85em;color:var(--text-muted);opacity:0.7">Never used</span>'
-                    : `<span style="font-size:0.8em;color:var(--text-muted)">🤖&nbsp;${user.agent_days_count}</span>
-                <br>
-                <span style="font-size:0.8em;color:var(--text-muted)">💬&nbsp;${user.chat_days_count}</span>
-                <br>
-                <span style="font-size:0.8em;color:var(--text-muted)">⌨️&nbsp;${user.cli_days_count}</span>${user.code_review_days_count ? `
-                <br>
-                <span style="font-size:0.8em;color:var(--text-muted)">🔍&nbsp;${user.code_review_days_count}</span>` : ''}${user.cloud_agent_days_count ? `
-                <br>
-                <span style="font-size:0.8em;color:var(--text-muted)">☁️&nbsp;${user.cloud_agent_days_count}</span>` : ''}`}
+            <td class="credits-cell">
+                ${getDisplayedCreditLicenses(user).length
+                    ? getDisplayedCreditLicenses(user).map(buildCreditLicenseCell).join('')
+                    : '<span style="color:var(--text-muted)">—</span>'}
             </td>
-            <td style="color:var(--text-muted); font-size: 0.9em; white-space: nowrap;">
+            <td class="environment-cell" ${primaryIdeOutdated ? 'style="cursor:help"' : `title="${[
+                user.all_languages_list && user.all_languages_list.length ? 'Languages: ' + user.all_languages_list.join(', ') : '',
+                user.all_models_list && user.all_models_list.length ? 'Models: ' + user.all_models_list.join(', ') : '',
+                user.all_ides_list && user.all_ides_list.length ? 'IDEs: ' + user.all_ides_list.join(', ') : ''
+            ].filter(Boolean).join('&#10;')}"`}>
+                <div><span class="environment-label">Lang:</span>&nbsp;${compactFavorite(user.favorite_language)}</div>
+                <div><span class="environment-label">LLM:</span>&nbsp;${compactFavorite(user.favorite_model)}</div>
+                <div><span class="environment-label">IDE:</span>&nbsp;${(() => { const raw = user.favorite_ide_raw; const pct = user.favorite_ide_pct; if (!raw) return user.favorite_ide; return `${raw}&nbsp;<span style="font-size:0.8em;color:var(--text-muted)">${pct || '0%'}</span>${primaryIdeOutdated ? '&nbsp;<span style="font-size:0.85em;pointer-events:none">⚠️</span>' : ''}`; })()}</div>
+            </td>
+            <td class="activity-cell" title="Active ${activityDate.relativeStr}&#10;${user.active_days_count} days total&#10;🤖 Agent days: ${user.agent_days_count}&#10;💬 Chat days: ${user.chat_days_count}&#10;⌨️ CLI days: ${user.cli_days_count}${user.code_review_days_count ? `&#10;🔍 Code Review days: ${user.code_review_days_count}` : ''}${user.cloud_agent_days_count ? `&#10;☁️ Cloud Agent days: ${user.cloud_agent_days_count}` : ''}">
                 ${user.never_active
                     ? '<span style="font-size:0.85em;opacity:0.5">— no activity —</span>'
-                    : `${getFriendlyDate(user.last_active_day)}
-                <br>
-                <span style="font-size:0.8em;">${user.active_days_count} days total ${prev ? diffAbsBadge(user.active_days_count, prev.active_days_count) : ''}</span>${(() => { const s = computeCurrentStreak(user.active_days_list, user.last_active_day); return s > 0 ? `<br><span style="font-size:0.8em;">🔥&nbsp;${s}d best streak</span>` : ''; })()}`}
+                    : `${activityDate.formattedDate}${activityStreak > 0 ? `<br><span style="font-size:0.8em;">🔥&nbsp;${activityStreak}d best streak</span>` : ''}
+                <div class="activity-day-counts">
+                    <span>🤖&nbsp;${user.agent_days_count}</span>
+                    <span>💬&nbsp;${user.chat_days_count}</span>
+                    <span>⌨️&nbsp;${user.cli_days_count}</span>
+                    ${user.code_review_days_count ? `<span>🔍&nbsp;${user.code_review_days_count}</span>` : ''}
+                    ${user.cloud_agent_days_count ? `<span>☁️&nbsp;${user.cloud_agent_days_count}</span>` : ''}
+                </div>`}
             </td>
         `;
 
@@ -1053,9 +1101,9 @@ ${(() => { const pn = user.ai_adoption_phase_number ?? 0; const prevPn = prev ? 
         // Row click opens user detail popup
         tr.addEventListener('click', () => openUserModal(user));
 
-        // Attach IDE version tooltip to the IDE cell (col 9) when the primary IDE is outdated
+        // Attach IDE version tooltip to the consolidated Environment cell (col 7).
         if (primaryIdeOutdated && primaryIdeTooltipHTML) {
-            const ideCell = tr.cells[9];
+            const ideCell = tr.cells[7];
             if (ideCell) {
                 ideCell.addEventListener('mouseenter', e => {
                     const tt = _getIdeTooltip();
@@ -1196,6 +1244,23 @@ function openUserModal(user) {
     const accountIdes = user.account_ides || {};
     const accountCli = user.account_cli || {};
     const accountEnterpriseLabels = user.account_enterprise_labels || {};
+    const creditLicenses = Array.isArray(user.ai_credit_licenses) ? user.ai_credit_licenses : [];
+
+    function licenseHeading(license) {
+        const scopeLabel = license.organization_label || license.enterprise_label || 'Unlabelled license';
+        const budget = license.monthly_budget == null ? '' : ` · ${formatCredits(license.monthly_budget)} credits/month`;
+        return `🔑 ${license.login} (${scopeLabel})${budget}`;
+    }
+
+    function buildLicenseCharts(login, fallbackDaily, warningHTML = '') {
+        const streams = creditLicenses.filter(license => license.login === login);
+        if (!streams.length) {
+            const enterpriseLabel = accountEnterpriseLabels[login] || '';
+            const enterpriseSuffix = enterpriseLabel ? ` (${enterpriseLabel})` : '';
+            return `<div class="user-meta-section"><div style="font-size:0.8em;color:var(--text-muted);margin-bottom:4px;font-weight:600">🔑 ${login}${enterpriseSuffix}${warningHTML}</div>${buildAccountIdeCliHTML(login)}${buildCombinedChart(fallbackDaily, currentMonthFilter, { noDataEmoji: warningHTML ? '🔴' : '' })}</div>`;
+        }
+        return streams.map(license => `<div class="user-meta-section"><div style="font-size:0.8em;color:var(--text-muted);margin-bottom:4px;font-weight:600">${licenseHeading(license)}${warningHTML}</div>${buildAccountIdeCliHTML(login)}${buildCombinedChart(license.daily || [], currentMonthFilter, { showCredits: true, noDataEmoji: warningHTML ? '🔴' : '' })}</div>`).join('');
+    }
 
     function buildAccountIdeCliHTML(login) {
         const acct = accountIdes[login];
@@ -1239,25 +1304,20 @@ function openUserModal(user) {
         // Per-account charts below
         for (const login of accounts) {
             const acctData = accountDaily[login] || [];
-            const ideCliHTML = buildAccountIdeCliHTML(login);
-            const enterpriseLabel = accountEnterpriseLabels[login] || '';
-            const enterpriseSuffix = enterpriseLabel ? ` (${enterpriseLabel})` : '';
             const warning = unusedPreferredAccounts.has(login)
                 ? '<span style="margin-left:0.35rem" title="Preferred enterprise license account has no usage in selected period">🔴</span>'
                 : '';
-            chartHTML += `<div class="user-meta-section"><div style="font-size:0.8em;color:var(--text-muted);margin-bottom:4px;font-weight:600">🔑 ${login}${enterpriseSuffix}${warning}</div>${ideCliHTML}${buildCombinedChart(acctData, currentMonthFilter, { noDataEmoji: unusedPreferredAccounts.has(login) ? '🔴' : '' })}</div>`;
+            chartHTML += buildLicenseCharts(login, acctData, warning);
         }
     } else {
         const onlyLogin = accounts[0] || user.user_login;
         const isPreferredUnused = unusedPreferredAccounts.has(onlyLogin);
-        const enterpriseLabel = accountEnterpriseLabels[onlyLogin] || user.enterprise_label || '';
-        const enterpriseSuffix = enterpriseLabel ? ` (${enterpriseLabel})` : '';
         const ideCliHTML = buildAccountIdeCliHTML(onlyLogin);
         if (ideCliHTML) showIdesInMeta = false;
         const warning = isPreferredUnused
             ? '<span style="margin-left:0.35rem" title="Preferred enterprise license account has no usage in selected period">🔴</span>'
             : '';
-        chartHTML = `<div class="user-meta-section" style="margin-top:0;padding-top:0;border-top:none"><div style="font-size:0.8em;color:var(--text-muted);margin-bottom:4px;font-weight:600">🔑 ${onlyLogin}${enterpriseSuffix}${warning}</div>${ideCliHTML}${buildCombinedChart(user.daily || [], currentMonthFilter, { noDataEmoji: isPreferredUnused ? '🔴' : '' })}</div>`;
+        chartHTML = buildLicenseCharts(onlyLogin, user.daily || [], warning);
     }
 
     document.getElementById('modal-body').innerHTML = chartHTML + buildUserMetaSection(user, { showIdes: showIdesInMeta });
@@ -1420,13 +1480,17 @@ function computeTeamAggregates(users, month) {
 
     const totalTurns = nonRevoked.reduce((s, u) => s + (u.turns || 0), 0);
     const avgTurns = total > 0 ? Math.round(totalTurns / total) : 0;
+    const totalCredits = nonRevoked
+        .flatMap(getVisibleCreditLicenses)
+        .reduce((sum, license) => sum + (license.used || 0), 0);
+    const avgCredits = total > 0 ? Math.round(totalCredits / total) : 0;
 
     const activeUsers = nonRevoked.filter(u => (u.active_days_count || 0) > 0);
     const avgPerf = activeUsers.length > 0
         ? Math.round(activeUsers.reduce((s, u) => s + (u.perf_score || 0), 0) / activeUsers.length)
         : 0;
 
-    return { avgDauPct, avgDAU, avgTurns, avgPerf, total, activeBizDays };
+    return { avgDauPct, avgDAU, avgTurns, avgCredits, avgPerf, total, activeBizDays };
 }
 
 function getMaturityStatusColor(status) {
@@ -1468,7 +1532,7 @@ function renderDAUChart() {
     container.innerHTML = buildDAUChart(filteredUsers, filteredUsers.length, currentMonthFilter);
     const avgStat = document.getElementById('dau-avg-stat');
     if (avgStat) {
-        const { avgDauPct: pct, avgDAU, avgTurns, avgPerf, activeBizDays } = computeTeamAggregates(filteredUsers, currentMonthFilter);
+        const { avgDauPct: pct, avgDAU, avgTurns, avgCredits, avgPerf, activeBizDays } = computeTeamAggregates(filteredUsers, currentMonthFilter);
         const activeUsersCount = filteredUsers.filter(u => (u.active_days_count || 0) > 0).length;
         const { dauStatus, turnsStatus, perfStatus } = getDauMetricStatuses(pct, avgTurns, avgPerf, filteredUsers.length, activeUsersCount);
         const dauColor = getMaturityStatusColor(dauStatus);
@@ -1477,7 +1541,7 @@ function renderDAUChart() {
         const avgDAUDisplay = Number(avgDAU).toFixed(1);
         if (activeBizDays.length) {
             // prev-month equivalents (only available when a month is selected)
-            let prevAvgTurns = null, prevAvgPerf = null, prevPct = null;
+            let prevAvgTurns = null, prevAvgCredits = null, prevAvgPerf = null, prevPct = null;
             if (prevMonthStats) {
                 // avg DAU % for prev month — computed server-side and shipped in prevMonthTotals
                 // (client-side recompute is not possible because user.daily is scoped to current month)
@@ -1488,6 +1552,9 @@ function renderDAUChart() {
                 const prevUsers = filteredUsers.map(u => prevMonthStats[u.user_login]).filter(Boolean);
                 if (prevUsers.length) {
                     prevAvgTurns = Math.round(prevUsers.reduce((s, p) => s + (p.turns || 0), 0) / prevUsers.length);
+                    const prevCredits = prevUsers.reduce(
+                        (sum, p) => sum + getVisibleCreditLicenses(p).reduce((licenseSum, license) => licenseSum + (license.used || 0), 0), 0);
+                    prevAvgCredits = Math.round(prevCredits / prevUsers.length);
                     const prevActive = prevUsers.filter(p => (p.active_days_count || 0) > 0);
                     prevAvgPerf = prevActive.length > 0
                         ? Math.round(prevActive.reduce((s, p) => s + (p.perf_score || 0), 0) / prevActive.length)
@@ -1506,6 +1573,12 @@ function renderDAUChart() {
                     <div style="text-align:right">
                         <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-bottom:2px">Avg Turns</div>
                         <div style="font-size:1rem;color:${turnsColor};font-weight:600;line-height:1;white-space:nowrap">${formatNumber(avgTurns)} ${diffBadge(avgTurns, prevAvgTurns, true)}</div>
+                        <div style="font-size:0.75rem;color:var(--text-muted);margin-top:1px">per user</div>
+                    </div>
+                    <div style="width:1px;background:rgba(255,255,255,0.1);align-self:stretch"></div>
+                    <div style="text-align:right">
+                        <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-bottom:2px">Avg Credits</div>
+                        <div style="font-size:1rem;color:var(--text-main);font-weight:600;line-height:1;white-space:nowrap">${formatCredits(avgCredits)} ${diffBadge(avgCredits, prevAvgCredits, true)}</div>
                         <div style="font-size:0.75rem;color:var(--text-muted);margin-top:1px">per user</div>
                     </div>
                     <div style="width:1px;background:rgba(255,255,255,0.1);align-self:stretch"></div>
@@ -1531,6 +1604,7 @@ function buildCombinedChart(daily, month, opts = {}) {
 
     const maxLoc = Math.max(...allDays.map(d => (d.code_loc||0) + (d.doc_loc||0)), 1);
     const maxTurns = Math.max(...allDays.map(d => (d.user_initiated||0) + (d.code_generation||0) + (d.cli_turns||0)), 1);
+    const maxCredits = Math.max(...allDays.map(d => d.ai_credits_used || 0), 1);
     const chartH = USER_CHART_HEIGHT;
 
     let bars = '';
@@ -1539,6 +1613,8 @@ function buildCombinedChart(daily, month, opts = {}) {
         const docLoc = d.doc_loc || 0;
         const totalLoc = codeLoc + docLoc;
         const locBottom = Math.round((totalLoc / maxLoc) * chartH);
+        const credits = d.ai_credits_used || 0;
+        const creditsBottom = Math.round((credits / maxCredits) * chartH);
 
         const cliTurns = d.cli_turns || 0;
         const turnsTotal = (d.user_initiated||0) + (d.code_generation||0) + cliTurns;
@@ -1551,7 +1627,7 @@ function buildCombinedChart(daily, month, opts = {}) {
         const dowStyle = d.isWeekend ? 'color:rgba(239,68,68,0.5)' : '';
 
         const locTitle = `Output LOC: ${formatNumber(totalLoc)} (Coding: ${formatNumber(codeLoc)}, Steering: ${formatNumber(docLoc)})`;
-        const turnsTitle = `Turns: ${turnsTotal} (Chat asks: ${d.user_initiated||0}, Agent/CodeGen: ${d.code_generation||0}, CLI: ${cliTurns})`;
+        const turnsTitle = `Turns: ${turnsTotal} (Chat asks: ${d.user_initiated||0}, Agent/CodeGen: ${d.code_generation||0}, CLI: ${cliTurns})${opts.showCredits ? ` | AI credits: ${formatCredits(credits)}` : ''}`;
         const totalLabel = turnsTotal > 0 ? `<span class="bar-turns-total">${turnsTotal}</span>` : '';
 
         bars += `
@@ -1564,6 +1640,7 @@ function buildCombinedChart(daily, month, opts = {}) {
                         <div class="bar-seg-cli" style="height:${hCli}px"></div>
                     </div>
                     ${totalLoc ? `<div class="loc-step" style="bottom:${locBottom}px" title="${locTitle}"><span class="loc-val">${formatNumber(totalLoc)}</span></div>` : ''}
+                    ${opts.showCredits && credits ? `<div class="credits-step" style="bottom:${creditsBottom}px" title="AI credits: ${formatCredits(credits)}"><span class="credits-val">${formatCredits(credits)}</span></div>` : ''}
                 </div>
                 <span class="bar-label">${label}<br><span style="${dowStyle}">${d.dow}</span></span>
             </div>`;
@@ -1576,6 +1653,7 @@ function buildCombinedChart(daily, month, opts = {}) {
             <span><span class="legend-dot" style="background:#38bdf8"></span>Agent/CodeGen</span>
             <span><span class="legend-dot" style="background:#34d399"></span>CLI</span>
             <span style="margin-left:0.5rem;padding-left:0.75rem;border-left:1px solid rgba(255,255,255,0.1)"><span class="legend-line"></span>Total Output LOC</span>
+            ${opts.showCredits ? '<span><span class="legend-line legend-line-credits"></span>AI Credits</span>' : ''}
         </div>`;
 }
 
@@ -1592,7 +1670,7 @@ function fillDailyGaps(daily, month) {
         for (let day = 1; day <= daysInMonth; day++) {
             const dt = new Date(yyyy, mm - 1, day);
             const iso = localISODate(dt);
-            const entry = dayMap[iso] || { day: iso, user_initiated: 0, code_generation: 0, cli_turns: 0, code_loc: 0, doc_loc: 0 };
+            const entry = dayMap[iso] || { day: iso, user_initiated: 0, code_generation: 0, cli_turns: 0, code_loc: 0, doc_loc: 0, ai_credits_used: 0 };
             entry.dow = dayNames[dt.getDay()];
             entry.isWeekend = dt.getDay() === 0 || dt.getDay() === 6;
             allDays.push(entry);
@@ -1606,7 +1684,7 @@ function fillDailyGaps(daily, month) {
             const dt = new Date(endDate);
             dt.setDate(endDate.getDate() - i);
             const iso = localISODate(dt);
-            const entry = dayMap[iso] || { day: iso, user_initiated: 0, code_generation: 0, cli_turns: 0, code_loc: 0, doc_loc: 0 };
+            const entry = dayMap[iso] || { day: iso, user_initiated: 0, code_generation: 0, cli_turns: 0, code_loc: 0, doc_loc: 0, ai_credits_used: 0 };
             entry.dow = dayNames[dt.getDay()];
             entry.isWeekend = dt.getDay() === 0 || dt.getDay() === 6;
             allDays.push(entry);

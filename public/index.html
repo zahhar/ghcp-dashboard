@@ -16,9 +16,9 @@
             <div class="header-content">
                 <div style="display:flex;align-items:center;gap:0.75rem">
                     <img src="/ghcp-logo.png" alt="GitHub Copilot" style="height:5rem;width:auto">
-                    <h1>GitHub Copilot Dashboard</h1>
+                    <h1>GHCP Dashboard</h1>
                 </div>
-                <p class="subtitle" style="margin-left: 5.75rem;">Insights into AI adoption</p>
+                <p class="subtitle" style="margin-left: 5.75rem;">Insights into Github Copilot adoption</p>
             </div>
             <div class="header-stats">
                 <div class="stat-box">
@@ -35,6 +35,11 @@
                     <span class="stat-label">Total Output</span>
                     <span class="stat-value" id="stat-total-loc">--</span>
                     <span class="stat-diff" id="stat-diff-loc"></span>
+                </div>
+                <div class="stat-box" title="AI credits consumed by all licenses in the selected period">
+                    <span class="stat-label">AI Credits</span>
+                    <span class="stat-value" id="stat-ai-credits">--</span>
+                    <span class="stat-diff" id="stat-ai-credits-detail"></span>
                 </div>
             </div>
         </header>
@@ -102,18 +107,15 @@
                         <table class="data-table" id="users-table">
                             <thead>
                                 <tr>
-                                    <th style="width:1%;white-space:nowrap">#</th>
                                     <th>User</th>
                                     <th title="Grand total = suggested + applied LOC&#10;💡 Suggested LOC = loc_suggested_to_add + loc_suggested_to_delete&#10;✏️ Applied LOC = loc_added + loc_deleted">Output</th>
-                                    <th title="Total interaction turns&#10;🏃 Output LOC per turn (suggested + applied)&#10;🎯 Acceptance Rate: accepted / generated">Turns</th>
                                     <th>Steering</th>
                                     <th>Coding</th>
+                                    <th title="Total interaction turns&#10;🏃 Output LOC per turn (suggested + applied)&#10;🎯 Acceptance Rate: accepted / generated">Turns</th>
                                     <th>Perf</th>
-                                    <th>Language</th>
-                                    <th>Model</th>
-                                    <th>IDE</th>
-                                    <th title="🤖 Agent days: used Copilot Agent mode&#10;💬 Chat days: used Copilot Chat&#10;⌨️ CLI days: used Copilot CLI&#10;🔍 Code Review days: Copilot reviewed code (active = requested by user, passive = auto-triggered)&#10;☁️ Cloud Agent days: Copilot cloud agent was invoked">Days</th>
-                                    <th>Activity</th>
+                                    <th title="AI credits consumed per license in the selected period, with monthly budget utilization and end-of-month forecast">AI Credits</th>
+                                    <th title="Favorite language, model, and IDE for the selected period">Environment</th>
+                                    <th title="Last activity and usage days&#10;🤖 Agent days: used Copilot Agent mode&#10;💬 Chat days: used Copilot Chat&#10;⌨️ CLI days: used Copilot CLI&#10;🔍 Code Review days: Copilot reviewed code (active = requested by user, passive = auto-triggered)&#10;☁️ Cloud Agent days: Copilot cloud agent was invoked">Activity</th>
                                 </tr>
                             </thead>
                             <tbody id="users-body">

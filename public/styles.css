@@ -294,12 +294,16 @@ body {
 }
 
 .diff-badge {
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+    white-space: nowrap;
+    break-inside: avoid;
     font-size: 0.7em;
     font-weight: 600;
     padding: 1px 5px;
     border-radius: 4px;
-    margin-left: 4px;
+    margin: 0 4px;
     vertical-align: middle;
 }
 
@@ -343,6 +347,7 @@ body {
     padding: 0.75rem 0.75rem 0.75rem 0;
     border-bottom: 1px solid var(--border-color);
     text-align: left;
+    white-space: nowrap;
 }
 
 .data-table td {
@@ -415,6 +420,104 @@ body {
 
 .metric-low {
     color: var(--text-muted);
+}
+
+.metric-with-diff {
+    white-space: nowrap;
+}
+
+.credits-cell {
+    min-width: 180px;
+    text-align: left;
+}
+
+.credits-license {
+    position: relative;
+    min-width: 170px;
+    padding: 0.2rem 0 0.35rem;
+}
+
+.credits-license + .credits-license {
+    margin-top: 0.55rem;
+    padding-top: 0.55rem;
+    border-top: 1px solid var(--border-color);
+}
+
+.credits-license-head {
+    display: inline-flex;
+    align-items: baseline;
+    justify-content: flex-start;
+    gap: 0;
+    color: var(--text-main);
+    font-size: 0.95rem;
+    font-weight: 400;
+    text-align: left;
+    white-space: nowrap;
+}
+
+.credits-budget-tail,
+.credits-license-foot {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+}
+
+.credits-progress {
+    height: 4px;
+    margin-top: 0.25rem;
+    overflow: hidden;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.credits-progress span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, #38bdf8, #818cf8);
+}
+
+.credits-license-foot {
+    margin-top: 0.2rem;
+    white-space: nowrap;
+}
+
+.credits-ok { color: #4ade80; }
+.credits-risk { color: #f87171; }
+.credits-forecast-label { color: var(--text-muted); }
+
+.environment-cell {
+    min-width: 11rem;
+    white-space: nowrap;
+}
+
+.environment-cell > div + div {
+    margin-top: 0.2rem;
+}
+
+.environment-label {
+    color: var(--text-muted);
+    font-size: 0.8em;
+}
+
+.activity-cell {
+    color: var(--text-muted);
+    font-size: 0.9em;
+    white-space: nowrap;
+}
+
+.activity-day-counts {
+    display: flex;
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: 0.65rem;
+    margin-top: 0.25rem;
+    font-size: 0.8em;
+    color: var(--text-muted);
+}
+
+.activity-day-counts span {
+    display: inline-flex;
+    white-space: nowrap;
 }
 
 /* Animations */
@@ -653,6 +756,28 @@ body {
     pointer-events: none;
 }
 
+.credits-step {
+    position: absolute;
+    left: -2px;
+    right: -2px;
+    height: 0;
+    border-top: 2px dashed #c084fc;
+    z-index: 3;
+    pointer-events: auto;
+    filter: drop-shadow(0 0 3px rgba(192, 132, 252, 0.45));
+}
+
+.credits-val {
+    position: absolute;
+    top: 2px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: #d8b4fe;
+    font-size: 0.55rem;
+    white-space: nowrap;
+    pointer-events: none;
+}
+
 .legend-line {
     display: inline-block;
     width: 16px;
@@ -662,6 +787,13 @@ body {
     margin-right: 4px;
     vertical-align: middle;
     box-shadow: 0 0 4px rgba(255, 255, 255, 0.3);
+}
+
+.legend-line-credits {
+    height: 0;
+    background: none;
+    border-top: 2px dashed #c084fc;
+    box-shadow: none;
 }
 
 .chart-section-title {
