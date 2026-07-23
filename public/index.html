@@ -32,12 +32,12 @@
                     <span class="stat-diff" id="stat-diff-interactions"></span>
                 </div>
                 <div class="stat-box">
-                    <span class="stat-label">Total Output</span>
+                    <span class="stat-label">Total LOC CHANGED</span>
                     <span class="stat-value" id="stat-total-loc">--</span>
                     <span class="stat-diff" id="stat-diff-loc"></span>
                 </div>
                 <div class="stat-box" title="AI credits consumed by all licenses in the selected period">
-                    <span class="stat-label">AI Credits</span>
+                    <span class="stat-label">AI Credits Spent</span>
                     <span class="stat-value" id="stat-ai-credits">--</span>
                     <span class="stat-diff" id="stat-ai-credits-detail"></span>
                 </div>
@@ -45,12 +45,12 @@
         </header>
 
         <main class="single-layout">
-            <!-- Daily Active Users -->
+            <!-- Active Users (DAU for a selected month, WAU for All times) -->
             <section class="card glass" id="dau-section">
                 <div class="card-header dau-card-header" style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none" id="dau-toggle" title="Click to collapse/expand">
                     <div style="display:flex;align-items:center;gap:0.6rem">
                         <span class="dau-chevron" id="dau-chevron">&#9660;</span>
-                        <h2 style="color:var(--text-main)">Daily Active Users</h2>
+                        <h2 id="active-users-title" style="color:var(--text-main)">Daily Active Users</h2>
                     </div>
                     <div id="dau-avg-stat" style="text-align:right;line-height:1.3"></div>
                 </div>
@@ -137,6 +137,28 @@
                 </div>
             </section>
 
+            <!-- Coding efficiency -->
+            <section class="card glass">
+                <div class="card-header section-toggle-header" style="display:flex;align-items:center;gap:0.6rem;cursor:pointer;user-select:none" id="coding-efficiency-toggle" title="Click to collapse/expand">
+                    <span class="section-chevron" id="coding-efficiency-chevron">&#9660;</span>
+                    <h2 style="color:var(--text-main)">Coding Efficiency</h2>
+                </div>
+                <div class="section-collapsible" id="coding-efficiency-collapsible">
+                    <div id="coding-efficiency-chart-container"></div>
+                </div>
+            </section>
+
+            <!-- Lines changed by AI -->
+            <section class="card glass">
+                <div class="card-header section-toggle-header" style="display:flex;align-items:center;gap:0.6rem;cursor:pointer;user-select:none" id="lines-changed-toggle" title="Click to collapse/expand">
+                    <span class="section-chevron" id="lines-changed-chevron">&#9660;</span>
+                    <h2 style="color:var(--text-main)">Lines changed by AI</h2>
+                </div>
+                <div class="section-collapsible" id="lines-changed-collapsible">
+                    <div id="lines-changed-chart-container"></div>
+                </div>
+            </section>
+
             <!-- Output Breakdown -->
             <section class="card glass">
                 <div class="card-header section-toggle-header" style="display:flex;align-items:center;gap:0.6rem;cursor:pointer;user-select:none" id="breakdown-toggle" title="Click to collapse/expand">
@@ -158,6 +180,9 @@
                         <div id="donut-syntax"></div>
                         <div id="donut-phase"></div>
                         <div id="donut-version"></div>
+                    </div>
+                    <div class="donut-grid" style="margin-top:1.25rem">
+                        <div id="donut-streak"></div>
                     </div>
                 </div>
             </section>

@@ -44,7 +44,7 @@ Project was intentionally built simple and file-based, so you can run it locally
 ## Repository structure
 
 - `server.js` — starts the web server and serves API + static UI
-- `update-data.js` — fetches new Copilot metrics, stores the, under `data/raw/*.json` and appends them to `data/data.json`
+- `update-data.js` — fetches Copilot metrics, stores raw snapshots under `data/raw/*.json`, and reconciles them into `data/data.json`
 - `ingest-data.js` — imports user-provided NDJSON files from `data/raw/inbox/` into `data/data.json` without calling the GitHub API
 - `debug.js` — downloads hisotrical data to `data/debug/*.json`and compares it with local `data/data.json`
 - `data/config.json` — stores enterprises and organizations with their slugs, token variable names, and last-sync state
@@ -168,7 +168,9 @@ This runs `update-data.js`, which for each configured enterprise and organizatio
 - fetches the latest 28-day report from the enterprise endpoint, then from each org endpoint,
 - backfills any calendar gaps via per-day API calls,
 - saves raw NDJSON files to `data/raw/`,
-- appends new records to `data/data.json` (deduplicates by `user_id:day`),
+- reconciles **every** downloaded record with `data/data.json` by `user_id:day`: new records are added, identical records are left unchanged, and real telemetry changes replace the prior NDJSON line,
+- ignores the rolling `report_start_day` and `report_end_day` export metadata when comparing records; metadata-only changes neither replace a stored line nor produce a log entry,
+- logs each replacement and its changed telemetry fields, so late corrections are visible in the update output,
 - updates `last_report_day` and `missing_data_days` in `data/config.json` for each scope.
 
 ## Data flow and freshness
@@ -177,7 +179,7 @@ This runs `update-data.js`, which for each configured enterprise and organizatio
 flowchart LR
 	A[GitHub Copilot Metrics API] --> B[update-data.js\nnpm run update]
 	B --> C[data/raw/*.json\nraw daily snapshots]
-	B --> D[data/data.json\nappended NDJSON history]
+   B --> D[data/data.json\nreconciled NDJSON history]
 	B --> E[data/config.json\nlast_report_day advanced]
 	J[User-provided NDJSON\nvia email / SFTP / etc.] --> K[data/raw/inbox/]
 	K --> L[ingest-data.js\nnpm run ingest]
@@ -191,7 +193,7 @@ flowchart LR
 	G --> I[Dashboard in browser]
 ```
 
-This integration is **not real-time**. GitHub Copilot metrics are published as daily NDJSON-style reports, and new files typically appear in the API **earliest on the next business day**. In practice, reporting delays of **24 hours or more** are normal.
+This integration is **not real-time**. GitHub Copilot metrics are published as daily NDJSON-style reports, and new files typically appear in the API **earliest on the next business day**. In practice, reporting delays of **24 hours or more** are normal. IDE telemetry is asynchronous and usually settles within **three complete UTC days**, so each update reconciles the entire latest 28-day report instead of treating previously imported days as final. This lets later exports replace preliminary zero or incomplete metrics with their corrected values.
 
 ### 3) Start the dashboard
 
@@ -250,7 +252,7 @@ You can drop multiple files at once — all are processed in a single run. If a 
 
 - `npm start` — run the dashboard server (`node server.js`)
 - `npm run dev` — same as start (no watcher currently)
-- `npm run update` — fetch and append new Copilot metrics from the GitHub API
+- `npm run update` — fetch and reconcile Copilot metrics from the GitHub API; logs any revisions to previously stored user/day records
 - `npm run ingest` — import user-provided NDJSON files from `data/raw/inbox/` into `data/data.json`
 
 ## Troubleshooting

@@ -392,7 +392,7 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                 const entryChatInitiated = Math.max(0, (entry.user_initiated_interaction_count || 0) - entryCliPrompts);
 
                 if (!stats.daily[entry.day]) {
-                    stats.daily[entry.day] = { user_initiated: 0, code_generation: 0, code_loc: 0, doc_loc: 0, cli_turns: 0 };
+                    stats.daily[entry.day] = { user_initiated: 0, code_generation: 0, code_loc: 0, doc_loc: 0, code_loc_added: 0, code_loc_deleted: 0, cli_turns: 0 };
                 }
                 stats.daily[entry.day].user_initiated += entryChatInitiated;
                 stats.daily[entry.day].code_generation += (entry.code_generation_activity_count || 0);
@@ -431,25 +431,35 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
 
             if (Array.isArray(entry.totals_by_language_feature)) {
                 let entryDocLoc = 0, entryTotalLoc = 0;
+                let entryDocLocAdded = 0, entryDocLocDeleted = 0;
+                let entryTotalLocAdded = 0, entryTotalLocDeleted = 0;
                 for (const lf of entry.totals_by_language_feature) {
                     const lang = (lf.language || 'unknown').toLowerCase();
-                    const acceptedLoc = (lf.loc_added_sum || 0) + (lf.loc_deleted_sum || 0);
+                    const locAdded = lf.loc_added_sum || 0;
+                    const locDeleted = lf.loc_deleted_sum || 0;
+                    const acceptedLoc = locAdded + locDeleted;
                     const suggestedLoc = (lf.loc_suggested_to_add_sum || 0) + (lf.loc_suggested_to_delete_sum || 0);
                     const outputLoc = acceptedLoc + suggestedLoc;
                     if (documentingLanguages.includes(lang)) {
-                        stats.doc_loc_added_sum += (lf.loc_added_sum || 0);
-                        stats.doc_loc_deleted_sum += (lf.loc_deleted_sum || 0);
+                        stats.doc_loc_added_sum += locAdded;
+                        stats.doc_loc_deleted_sum += locDeleted;
                         stats.doc_loc_suggested_sum += suggestedLoc;
                         stats.doc_loc_applied_sum += acceptedLoc;
                         if (outputLoc > 0) stats.doc_languages.add(lf.language);
                         entryDocLoc += outputLoc;
+                        entryDocLocAdded += locAdded;
+                        entryDocLocDeleted += locDeleted;
                     }
                     if (outputLoc > 0) stats.allLocByLanguage[lf.language || 'unknown'] = (stats.allLocByLanguage[lf.language || 'unknown'] || 0) + outputLoc;
                     entryTotalLoc += outputLoc;
+                    entryTotalLocAdded += locAdded;
+                    entryTotalLocDeleted += locDeleted;
                 }
                 if (entry.day && stats.daily[entry.day]) {
                     stats.daily[entry.day].doc_loc += entryDocLoc;
                     stats.daily[entry.day].code_loc += entryTotalLoc - entryDocLoc;
+                    stats.daily[entry.day].code_loc_added += entryTotalLocAdded - entryDocLocAdded;
+                    stats.daily[entry.day].code_loc_deleted += entryTotalLocDeleted - entryDocLocDeleted;
                 }
                 if (entry.day && stats.accountDaily[rawLogin] && stats.accountDaily[rawLogin][entry.day]) {
                     stats.accountDaily[rawLogin][entry.day].doc_loc += entryDocLoc;
@@ -890,7 +900,7 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             all_doc_languages_list: [...user.doc_languages].sort(),
             daily: Object.entries(user.daily)
                 .sort(([a], [b]) => a.localeCompare(b))
-                .map(([day, d]) => ({ day, user_initiated: d.user_initiated, code_generation: d.code_generation, cli_turns: d.cli_turns, code_loc: d.code_loc, doc_loc: d.doc_loc })),
+                .map(([day, d]) => ({ day, user_initiated: d.user_initiated, code_generation: d.code_generation, cli_turns: d.cli_turns, code_loc: d.code_loc, doc_loc: d.doc_loc, code_loc_added: d.code_loc_added || 0, code_loc_deleted: d.code_loc_deleted || 0 })),
             accounts: userAccounts,
             emails: userEmails,
             account_daily: Object.fromEntries(

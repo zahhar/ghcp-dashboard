@@ -5,12 +5,13 @@
  *
  * Fetches Copilot usage metrics with a resilient, gap-aware strategy:
  *   1) Pull latest 28-day data from enterprise and organization users-28-day/latest
- *   2) Merge into data.json by unique key (user_id + day)
+ *   2) Reconcile every downloaded record against data.json by unique key (user_id + day)
  *   3) Detect calendar gaps and try per-day backfill (users-1-day)
  *   4) Persist unresolved gaps in config.{enterprise|organization}.missing_data_days for catch-up
  *
- * Downloads raw NDJSON files to /data/raw, appends only missing entries
- * to data.json, and updates config.json.
+ * Downloads raw NDJSON files to /data/raw and reconciles every incoming record
+ * against data.json. Changed records replace the stored line, which allows delayed
+ * GitHub telemetry to correct prior-day metrics. Updates config.json as well.
  *
  * Requires: .env file with token variables referenced by config env_token fields
  *           config.json with enterprise/org slugs and state fields
@@ -46,6 +47,7 @@ if (process.env.USE_MOCK_DATA === 'true') {
 const CONFIG_PATH = path.join(ROOT_DIR, 'data', 'config.json');
 const DATA_FILE = path.join(ROOT_DIR, 'data', 'data.json');
 const DATA_DIR = path.join(ROOT_DIR, 'data', 'raw');
+const VOLATILE_REPORT_FIELDS = new Set(['report_start_day', 'report_end_day']);
 
 const config = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
 
@@ -204,17 +206,71 @@ function parseNdjsonLines(lines, label) {
     return parsed;
 }
 
-function collectExistingDataState(lines) {
-    const existingKeys = new Set();
-    let maxDay = null;
+function stableStringify(value) {
+    if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+    if (value && typeof value === 'object') {
+        return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(',')}}`;
+    }
+    return JSON.stringify(value);
+}
 
-    for (const { rec } of parseNdjsonLines(lines, 'data.json')) {
+function getChangedFields(previous, incoming) {
+    const keys = new Set([...Object.keys(previous), ...Object.keys(incoming)]);
+    return [...keys].filter(key =>
+        !VOLATILE_REPORT_FIELDS.has(key) && stableStringify(previous[key]) !== stableStringify(incoming[key])
+    );
+}
+
+function createDataStore(lines) {
+    const recordsByKey = new Map();
+    const passthroughLines = [];
+    let duplicateKeys = 0;
+
+    for (const { line, rec } of parseNdjsonLines(lines, 'data.json')) {
         const key = getRecordKey(rec);
-        if (key) existingKeys.add(key);
-        if (rec.day && (!maxDay || rec.day > maxDay)) maxDay = rec.day;
+        if (!key) {
+            passthroughLines.push(line);
+            continue;
+        }
+        if (recordsByKey.has(key)) duplicateKeys++;
+        recordsByKey.set(key, { line, rec });
     }
 
-    return { existingKeys, maxDay };
+    return { recordsByKey, passthroughLines, duplicateKeys };
+}
+
+function reconcileLines(candidateLines, store, label) {
+    const result = { added: 0, updated: 0, unchanged: 0 };
+
+    for (const { line, rec } of parseNdjsonLines(candidateLines, label)) {
+        const key = getRecordKey(rec);
+        if (!key) continue;
+
+        const existing = store.recordsByKey.get(key);
+        if (!existing) {
+            store.recordsByKey.set(key, { line, rec });
+            result.added++;
+            continue;
+        }
+
+        const changedFields = getChangedFields(existing.rec, rec);
+        if (changedFields.length === 0) {
+            result.unchanged++;
+            continue;
+        }
+
+        store.recordsByKey.set(key, { line, rec });
+        result.updated++;
+        console.log(`  🔄 Replaced changed record ${key} (${rec.day}); fields: ${changedFields.join(', ')}`);
+    }
+
+    return result;
+}
+
+function writeDataStore(filePath, store) {
+    const lines = [
+        ...store.recordsByKey.values()].map(entry => entry.line).concat(store.passthroughLines);
+    fs.writeFileSync(filePath, lines.length ? `${lines.join('\n')}\n` : '');
 }
 
 function getDaysWithData(lines) {
@@ -225,26 +281,8 @@ function getDaysWithData(lines) {
     return days;
 }
 
-function prepareMissingLines(candidateLines, existingKeys) {
-    const missingLines = [];
-    let duplicates = 0;
-
-    for (const { line, rec } of parseNdjsonLines(candidateLines, 'candidate lines')) {
-        const key = getRecordKey(rec);
-        if (!key) continue;
-        if (existingKeys.has(key)) {
-            duplicates++;
-            continue;
-        }
-        existingKeys.add(key);
-        missingLines.push({ line, day: rec.day });
-    }
-
-    return { missingLines, duplicates };
-}
-
 // ── Per-scope processing ────────────────────────────────────────────────
-async function processScope(entity, scopeType, yesterday, existingKeys) {
+async function processScope(entity, scopeType, yesterday, dataStore) {
     const scopeLabel = scopeType === 'enterprise' ? 'Enterprise' : 'Organization';
     const envTokenName = entity.env_token;
 
@@ -301,12 +339,8 @@ async function processScope(entity, scopeType, yesterday, existingKeys) {
     fs.writeFileSync(latestRawPath, latestLines.join('\n') + '\n');
     console.log(`  💾 Saved raw latest report to data/raw/${path.basename(latestRawPath)}`);
 
-    const latestMerge = prepareMissingLines(latestLines, existingKeys);
-    if (latestMerge.missingLines.length > 0) {
-        const appendData = '\n' + latestMerge.missingLines.map(x => x.line).join('\n') + '\n';
-        fs.appendFileSync(DATA_FILE, appendData);
-    }
-    console.log(`  🧩 Latest merge: +${latestMerge.missingLines.length} new line(s), ${latestMerge.duplicates} duplicate key(s) skipped`);
+    const latestMerge = reconcileLines(latestLines, dataStore, 'latest report');
+    console.log(`  🧩 Latest reconciliation: +${latestMerge.added} new, 🔄 ${latestMerge.updated} changed, =${latestMerge.unchanged} unchanged line(s)`);
 
     const daysWithLatestData = getDaysWithData(latestLines);
     const windowDays = dateRange(reportStart, yesterday);
@@ -322,7 +356,8 @@ async function processScope(entity, scopeType, yesterday, existingKeys) {
 
     const unresolvedMissing = [];
     let backfillAdded = 0;
-    let backfillDuplicate = 0;
+    let backfillUpdated = 0;
+    let backfillUnchanged = 0;
 
     for (const day of backfillCandidates) {
         process.stdout.write(`    ${day}... `);
@@ -348,18 +383,14 @@ async function processScope(entity, scopeType, yesterday, existingKeys) {
         const rawPath = path.join(DATA_DIR, `${safeScopeSlug}_${day}_raw.json`);
         fs.writeFileSync(rawPath, dayLines.join('\n') + '\n');
 
-        const dayMerge = prepareMissingLines(dayLines, existingKeys);
-        backfillAdded += dayMerge.missingLines.length;
-        backfillDuplicate += dayMerge.duplicates;
-
-        if (dayMerge.missingLines.length > 0) {
-            const appendData = '\n' + dayMerge.missingLines.map(x => x.line).join('\n') + '\n';
-            fs.appendFileSync(DATA_FILE, appendData);
-        }
-        console.log(`✅ ${dayLines.length} entries (${dayMerge.missingLines.length} new, ${dayMerge.duplicates} duplicate)`);
+        const dayMerge = reconcileLines(dayLines, dataStore, `${day} backfill`);
+        backfillAdded += dayMerge.added;
+        backfillUpdated += dayMerge.updated;
+        backfillUnchanged += dayMerge.unchanged;
+        console.log(`✅ ${dayLines.length} entries (${dayMerge.added} new, ${dayMerge.updated} changed, ${dayMerge.unchanged} unchanged)`);
     }
 
-    console.log(`\n  📝 Backfill merge: +${backfillAdded} new line(s), ${backfillDuplicate} duplicate key(s) skipped`);
+    console.log(`\n  📝 Backfill reconciliation: +${backfillAdded} new, 🔄 ${backfillUpdated} changed, =${backfillUnchanged} unchanged line(s)`);
 
     // Use the API-declared report end as the new last_report_day (most reliable indicator)
     const nextLastReportDay = reportEnd > (lastDay || '') ? reportEnd : (lastDay || '');
@@ -390,9 +421,13 @@ async function main() {
         process.exit(1);
     }
 
-    // Load existing data state once — shared across all scopes to avoid duplicate rows
+    // Load data once — all scopes reconcile records in-memory before one final write.
     const existingDataLines = readDataFileLines(DATA_FILE);
-    const { existingKeys } = collectExistingDataState(existingDataLines);
+    const dataStore = createDataStore(existingDataLines);
+    console.log(`📊 data.json currently holds ${dataStore.recordsByKey.size} unique record(s)`);
+    if (dataStore.duplicateKeys > 0) {
+        console.log(`⚠️  Found ${dataStore.duplicateKeys} duplicate stored key(s); keeping the last occurrence during reconciliation`);
+    }
 
     for (const ent of config.enterprises) {
         const entHeader = `🏬  ${ent.label || ent.slug || ent.id || 'enterprise'}  (${ent.slug || 'no slug'})`;
@@ -400,7 +435,7 @@ async function main() {
         console.log(entHeader);
         console.log('─'.repeat(60));
 
-        await processScope(ent, 'enterprise', yesterday, existingKeys);
+        await processScope(ent, 'enterprise', yesterday, dataStore);
 
         if (Array.isArray(ent.organizations) && ent.organizations.length > 0) {
             for (const org of ent.organizations) {
@@ -408,11 +443,13 @@ async function main() {
                 console.log(`\n  ${'-'.repeat(56)}`);
                 console.log(`  ${orgHeader}`);
                 console.log(`  ${'-'.repeat(56)}`);
-                await processScope(org, 'organization', yesterday, existingKeys);
+                await processScope(org, 'organization', yesterday, dataStore);
             }
         }
     }
 
+    writeDataStore(DATA_FILE, dataStore);
+    console.log(`\n💾 Reconciled data.json: ${dataStore.recordsByKey.size} unique record(s) written`);
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2) + '\n');
     console.log('\n🎉 Done!');
 }

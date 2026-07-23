@@ -66,8 +66,17 @@ const ROCKET_THRESHOLD = 200;
 // Number of days shown in the rolling DAU window and per-user detail chart (all-time mode)
 const DAU_WINDOW_DAYS = 30;
 
+// Number of Monday–Sunday calendar weeks shown by the all-time WAU chart.
+const WAU_WINDOW_WEEKS = 52;
+
+// WAU bars use population percentage as the primary metric; absolute counts appear above them.
+const WAU_PERCENT_CHART_HEIGHT = 150;
+
 // Pixel height of the bar drawing area in the org-level DAU chart
 const DAU_CHART_HEIGHT = 120;
+
+// Pixel height of the coding LOC added/deleted paired-bar chart.
+const LINES_CHANGED_CHART_HEIGHT = 180;
 
 // Pixel height of the bar drawing area in the per-user detail (combined turns/LOC) chart
 const USER_CHART_HEIGHT = 170;
@@ -956,6 +965,12 @@ function renderUsersTable() {
         sortedUsers = sortedUsers.filter(u => u.team_manager === currentManagerFilter);
     }
 
+    // The best streak belongs to the current data period. Compute it once so the
+    // Activity column and Output Breakdown distribution always show the same value.
+    for (const user of sortedUsers) {
+        user.best_streak = computeCurrentStreak(user.active_days_list, user.last_active_day);
+    }
+
     // Update header stats to reflect current filter
     const filteredOutput = sortedUsers.reduce((acc, u) => acc + u.total_suggested_changed + u.total_loc_changed, 0);
     const filteredInteractions = sortedUsers.reduce((acc, u) => acc + u.turns, 0);
@@ -1012,9 +1027,12 @@ function renderUsersTable() {
 
     renderDonutSection(sortedUsers);
     renderMaturitySection(sortedUsers);
+    renderCodingEfficiencyChart(sortedUsers);
+    renderLinesChangedChart(sortedUsers);
 
     sortedUsers.forEach((user, idx) => {
         const tr = document.createElement('tr');
+        tr.id = getUserTableRowId(user.user_login);
         const prevRaw = prevMonthStats ? prevMonthStats[user.user_login] : null;
         // Never-active users show no diff badges; only the "new" label is allowed (handled separately below)
         const prev = user.never_active ? null : prevRaw;
@@ -1032,7 +1050,7 @@ function renderUsersTable() {
         const primaryIdeOutdated = isPrimaryIdeOutdated(user);
         const primaryIdeTooltipHTML = primaryIdeOutdated ? buildPrimaryIdeTooltipHTML(user) : '';
         const activityDate = getFriendlyDateInfo(user.last_active_day);
-        const activityStreak = computeCurrentStreak(user.active_days_list, user.last_active_day);
+        const activityStreak = user.best_streak;
 
         // Keep user_login hidden in anonymized mode, but preserve the original rendering for easy restore.
         // <span style="font-size: 0.8em; color: var(--text-muted); font-weight: 400;">${user.team ? user.team + ' | ' : ''}${user.user_login}</span>
@@ -1040,7 +1058,7 @@ function renderUsersTable() {
         tr.innerHTML = `
             <td>
                 <div class="user-cell" style="white-space: nowrap; flex-direction: column; align-items: flex-start; gap: 0.1rem;">
-                    <span style="font-weight: 600;">${user.human_name}${revokedMark}${newUserMark}</span>
+                    <span class="user-name-line" style="font-weight: 600;"><span class="user-row-ordinal" aria-label="Row ${idx + 1}">${idx + 1}</span>${user.human_name}${revokedMark}${newUserMark}</span>
                     <span style="font-size: 0.8em; color: var(--text-muted); font-weight: 400;">${user.role || user.user_login}</span>
                     <span style="font-size: 0.8em; color: var(--text-muted); font-weight: 400;">${user.team_title ? (user.team_unit ? user.team_unit + ' · ' + user.team_title : user.team_title) : (user.team || '')}</span>
                     ${Array.isArray(user.accounts) && user.accounts.length > 1 ? `<span style="font-size: 0.7em; color: var(--text-muted); font-weight: 400; opacity: 0.7;">🔑 ${user.accounts.length} accounts</span>` : (user.enterprise_label || user.organization_label ? `<span style="font-size: 0.75em; color: var(--text-muted); font-weight: 400; opacity: 0.8;">${[user.enterprise_label, user.organization_label].filter(Boolean).join(' · ')}</span>` : '')}
@@ -1071,13 +1089,13 @@ function renderUsersTable() {
                 <br>
                 <span style="font-size:0.8em;color:var(--text-muted)">${formatLocPair('✏️', user.code_loc_applied)}</span>
             </td>
-            <!-- Turns: total interactions | 🏃 code generation activity count | 🎯 code acceptance activity count -->
-            <td title="Total interaction turns (user_initiated + cli_requests)&#10;🏃 Code generation activity count&#10;🎯 Code acceptance activity count">
+            <!-- Turns: total interactions | 🎯 code acceptance activity count | 🏃 code generation activity count -->
+            <td title="Total interaction turns (user_initiated + cli_requests)&#10;🎯 Code acceptance activity count&#10;🏃 Code generation activity count">
                 <span class="metric-with-diff"><span style="font-size: 1.1em;">${formatNumber(user.turns)}</span>${prev ? diffBadge(user.turns, prev.turns, true) : ''}</span>
                 <br>
-                <span style="font-size:0.8em;color:var(--text-muted)">🏃\u202f${formatNumber(user.code_generation_activity_count)}</span>
-                <br>
                 <span style="font-size:0.8em;color:var(--text-muted)">🎯 ${formatNumber(user.code_acceptance_activity_count)}</span>
+                <br>
+                <span style="font-size:0.8em;color:var(--text-muted)">🏃\u202f${formatNumber(user.code_generation_activity_count)}</span>
             </td>
             <td style="white-space: nowrap;" title="PERF = Total Output / active days&#10;Total Output = Suggested LOC + Applied LOC&#10;Suggested LOC = loc_suggested_to_add + loc_suggested_to_delete&#10;Applied LOC = loc_added + loc_deleted&#10;${formatNumber(user.perf_score)} loc/day">
                 <span>${formatNumber(user.perf_score)}</span>
@@ -1411,6 +1429,68 @@ function computeDAU(users, days = DAU_WINDOW_DAYS, month = '') {
     return result;
 }
 
+// Compute unique users active during each Monday–Sunday calendar week.
+// The 52-week window ends with the Sunday of the latest week containing data.
+function computeWAU(users, weeks = WAU_WINDOW_WEEKS) {
+    const allDays = users
+        .flatMap(u => Array.isArray(u.daily) ? u.daily.map(d => d.day) : [])
+        .filter(Boolean)
+        .sort();
+    if (!allDays.length) return [];
+
+    const getWeekStart = (day) => {
+        const dt = new Date(day + 'T12:00:00');
+        const daysSinceMonday = (dt.getDay() + 6) % 7;
+        dt.setDate(dt.getDate() - daysSinceMonday);
+        return dt;
+    };
+    const getIsoWeekNumber = (date) => {
+        const dt = new Date(date);
+        dt.setDate(dt.getDate() + 3 - ((dt.getDay() + 6) % 7));
+        const firstThursday = new Date(dt.getFullYear(), 0, 4);
+        firstThursday.setDate(firstThursday.getDate() + 3 - ((firstThursday.getDay() + 6) % 7));
+        return 1 + Math.round((dt - firstThursday) / 604800000);
+    };
+
+    const latestWeekStart = getWeekStart(allDays[allDays.length - 1]);
+    const firstWeekStart = new Date(latestWeekStart);
+    firstWeekStart.setDate(firstWeekStart.getDate() - (weeks - 1) * 7);
+    const activeUsersByWeek = new Map();
+
+    for (const user of users) {
+        const activeWeeks = new Set();
+        for (const daily of user.daily || []) {
+            const weekStart = getWeekStart(daily.day);
+            if (weekStart >= firstWeekStart && weekStart <= latestWeekStart) {
+                activeWeeks.add(localISODate(weekStart));
+            }
+        }
+        for (const weekStart of activeWeeks) {
+            if (!activeUsersByWeek.has(weekStart)) activeUsersByWeek.set(weekStart, new Set());
+            activeUsersByWeek.get(weekStart).add(user.user_login);
+        }
+    }
+
+    return Array.from({ length: weeks }, (_, index) => {
+        const weekStart = new Date(firstWeekStart);
+        weekStart.setDate(weekStart.getDate() + index * 7);
+        const weekEnd = new Date(weekStart);
+        weekEnd.setDate(weekEnd.getDate() + 6);
+        const start = localISODate(weekStart);
+        return {
+            weekStart: start,
+            weekEnd: localISODate(weekEnd),
+            weekNumber: getIsoWeekNumber(weekStart),
+            count: activeUsersByWeek.get(start)?.size || 0
+        };
+    });
+}
+
+function formatCompactDate(day) {
+    const [year, month, date] = day.split('-');
+    return `${date}.${month}.${year}`;
+}
+
 function buildDAUChart(users, totalUsers, month) {
     const total = totalUsers || users.length;
     const data = computeDAU(users, 30, month || '');
@@ -1436,6 +1516,77 @@ function buildDAUChart(users, totalUsers, month) {
             </div>`;
     }
     return `<div class="combined-chart">${bars}</div>`;
+}
+
+function buildWAUPercentageChart(data, totalUsers) {
+    const population = totalUsers || 0;
+    const bars = data.map(d => {
+        const pct = population > 0 ? d.count / population * 100 : 0;
+        const pctDisplay = Math.round(pct);
+        const h = Math.round((pct / 100) * WAU_PERCENT_CHART_HEIGHT);
+        const dateRange = `${formatCompactDate(d.weekStart)}-${formatCompactDate(d.weekEnd)}`;
+        const tooltip = `${dateRange}: ${pctDisplay}% WAU (${d.count}/${population} users)`;
+        return `
+            <div class="bar-col-combined" data-week-range="${dateRange}" data-week-tooltip="${tooltip}" aria-label="${tooltip}">
+                <div class="bar-area" style="height:${WAU_PERCENT_CHART_HEIGHT}px">
+                    <div class="bar-stack" style="height:${h}px">
+                        <div class="bar-seg-dau" style="height:${h}px"></div>
+                    </div>
+                    ${d.count ? `<div class="wau-percent-label" style="bottom:${h + 3}px">${pctDisplay}%<br><span class="wau-count-label">${d.count}</span></div>` : ''}
+                </div>
+                <span class="bar-label">${d.weekNumber}</span>
+            </div>`;
+    }).join('');
+    return `<div class="combined-chart wau-chart wau-percentage-chart">${bars}</div>`;
+}
+
+function buildWAUCharts(users, totalUsers) {
+    const data = computeWAU(users);
+    if (!data.length) return '<p style="color:var(--text-muted)">No data available.</p>';
+    return `
+        <div class="wau-chart-section">
+            <div class="wau-chart-title">Weekly active users · % of population</div>
+            ${buildWAUPercentageChart(data, totalUsers)}
+        </div>`;
+}
+
+let _wauTooltipEl = null;
+
+function getWAUTooltip() {
+    if (!_wauTooltipEl) {
+        _wauTooltipEl = document.createElement('div');
+        _wauTooltipEl.className = 'wau-tooltip';
+        _wauTooltipEl.style.display = 'none';
+        document.body.appendChild(_wauTooltipEl);
+    }
+    return _wauTooltipEl;
+}
+
+function positionWAUTooltip(event) {
+    const tooltip = getWAUTooltip();
+    const margin = 12;
+    const width = tooltip.offsetWidth || 190;
+    const height = tooltip.offsetHeight || 36;
+    let left = event.clientX + margin;
+    let top = event.clientY - height - margin;
+    if (left + width > window.innerWidth - 8) left = event.clientX - width - margin;
+    if (top < 8) top = event.clientY + margin;
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `${top}px`;
+}
+
+function bindWAUTooltips(container) {
+    const tooltip = getWAUTooltip();
+    tooltip.style.display = 'none';
+    container.querySelectorAll('.wau-chart .bar-col-combined').forEach(bar => {
+        bar.addEventListener('mouseenter', event => {
+            tooltip.textContent = bar.dataset.weekTooltip || bar.dataset.weekRange || '';
+            tooltip.style.display = 'block';
+            positionWAUTooltip(event);
+        });
+        bar.addEventListener('mousemove', positionWAUTooltip);
+        bar.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
+    });
 }
 
 // ── Section collapse helper ─────────────────────────────────────────────
@@ -1483,9 +1634,11 @@ function initSectionToggle(toggleId, collapsibleId, chevronId) {
 
 // ── Users table + Output Breakdown collapse toggles ─────────────────────
 initSectionToggle('users-toggle',          'users-table-collapsible',    'users-chevron');
-    initSectionToggle('maturity-toggle',       'maturity-collapsible',       'maturity-chevron');
-    initSectionToggle('breakdown-toggle',      'breakdown-collapsible',      'breakdown-chevron');
-    initSectionToggle('watched-models-toggle', 'watched-models-collapsible', 'watched-models-chevron');
+initSectionToggle('maturity-toggle',       'maturity-collapsible',       'maturity-chevron');
+initSectionToggle('coding-efficiency-toggle', 'coding-efficiency-collapsible', 'coding-efficiency-chevron');
+initSectionToggle('lines-changed-toggle',  'lines-changed-collapsible',  'lines-changed-chevron');
+initSectionToggle('breakdown-toggle',      'breakdown-collapsible',      'breakdown-chevron');
+initSectionToggle('watched-models-toggle', 'watched-models-collapsible', 'watched-models-chevron');
 
 // ── Shared aggregate computation ───────────────────────────────────────────
 // Used by both renderDAUChart (header stats) and renderMaturitySection (ctx).
@@ -1553,17 +1706,32 @@ function renderDAUChart() {
     if (currentManagerFilter !== '') {
         filteredUsers = filteredUsers.filter(u => u.team_manager === currentManagerFilter);
     }
-    container.innerHTML = buildDAUChart(filteredUsers, filteredUsers.length, currentMonthFilter);
+    const isMonthlyView = Boolean(currentMonthFilter);
+    const titleEl = document.getElementById('active-users-title');
+    if (titleEl) titleEl.textContent = isMonthlyView ? 'Daily Active Users' : 'Weekly Active Users';
+    container.innerHTML = isMonthlyView
+        ? buildDAUChart(filteredUsers, filteredUsers.length, currentMonthFilter)
+        : buildWAUCharts(filteredUsers, filteredUsers.length);
+    if (!isMonthlyView) bindWAUTooltips(container);
     const avgStat = document.getElementById('dau-avg-stat');
     if (avgStat) {
-        const { avgDauPct: pct, avgDAU, avgTurns, avgCredits, avgPerf, activeBizDays } = computeTeamAggregates(filteredUsers, currentMonthFilter);
+        const { avgDauPct: dailyPct, avgDAU: dailyAverage, avgTurns, avgCredits, avgPerf, activeBizDays } = computeTeamAggregates(filteredUsers, currentMonthFilter);
+        const weeklyData = isMonthlyView ? [] : computeWAU(filteredUsers);
+        const avgWAU = weeklyData.length
+            ? weeklyData.reduce((sum, week) => sum + week.count, 0) / weeklyData.length
+            : 0;
+        const pct = isMonthlyView
+            ? dailyPct
+            : (filteredUsers.length > 0 ? Math.round(avgWAU / filteredUsers.length * 100) : null);
+        const avgActiveUsers = isMonthlyView ? dailyAverage : avgWAU;
+        const hasActivityData = isMonthlyView ? activeBizDays.length > 0 : weeklyData.length > 0;
         const activeUsersCount = filteredUsers.filter(u => (u.active_days_count || 0) > 0).length;
         const { dauStatus, turnsStatus, perfStatus } = getDauMetricStatuses(pct, avgTurns, avgPerf, filteredUsers.length, activeUsersCount);
         const dauColor = getMaturityStatusColor(dauStatus);
         const turnsColor = getMaturityStatusColor(turnsStatus);
         const perfColor = getMaturityStatusColor(perfStatus);
-        const avgDAUDisplay = Number(avgDAU).toFixed(1);
-        if (activeBizDays.length) {
+        const avgActiveUsersDisplay = Number(avgActiveUsers).toFixed(1);
+        if (hasActivityData) {
             // prev-month equivalents (only available when a month is selected)
             let prevAvgTurns = null, prevAvgCredits = null, prevAvgPerf = null, prevPct = null;
             if (prevMonthStats) {
@@ -1589,8 +1757,8 @@ function renderDAUChart() {
             avgStat.innerHTML = `
                 <div style="display:flex;gap:1.5rem;align-items:flex-start">
                     <div style="text-align:right">
-                        <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-bottom:2px">Avg DAU</div>
-                        <div style="font-size:1rem;color:${dauColor};font-weight:600;line-height:1;white-space:nowrap">${avgDAUDisplay}</div>
+                        <div style="font-size:0.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-bottom:2px">Avg ${isMonthlyView ? 'DAU' : 'WAU'}</div>
+                        <div style="font-size:1rem;color:${dauColor};font-weight:600;line-height:1;white-space:nowrap">${avgActiveUsersDisplay}</div>
                         <div style="font-size:0.75rem;color:var(--text-muted);margin-top:1px;white-space:nowrap">${pct}% ${diffBadge(pct, prevPct, true)}</div>
                     </div>
                     <div style="width:1px;background:rgba(255,255,255,0.1);align-self:stretch"></div>
@@ -1616,6 +1784,254 @@ function renderDAUChart() {
             avgStat.innerHTML = '';
         }
     }
+}
+
+function getWeekStart(day) {
+    const dt = new Date(day + 'T12:00:00');
+    const daysSinceMonday = (dt.getDay() + 6) % 7;
+    dt.setDate(dt.getDate() - daysSinceMonday);
+    return dt;
+}
+
+// Show the direct value proposition of Copilot coding activity. `code_loc_changed`
+// deliberately excludes documentation/prompt languages, so steering output never
+// contributes to this efficiency measure.
+function getUserTableRowId(userLogin) {
+    return `user-row-${encodeURIComponent(userLogin)}`;
+}
+
+let _codingEfficiencyTooltipEl = null;
+
+function getCodingEfficiencyTooltip() {
+    if (!_codingEfficiencyTooltipEl) {
+        _codingEfficiencyTooltipEl = document.createElement('div');
+        _codingEfficiencyTooltipEl.className = 'coding-efficiency-tooltip';
+        _codingEfficiencyTooltipEl.style.display = 'none';
+        document.body.appendChild(_codingEfficiencyTooltipEl);
+    }
+    return _codingEfficiencyTooltipEl;
+}
+
+function positionCodingEfficiencyTooltip(event) {
+    const tooltip = getCodingEfficiencyTooltip();
+    const margin = 12;
+    const width = tooltip.offsetWidth || 220;
+    const height = tooltip.offsetHeight || 38;
+    let left = event.clientX + margin;
+    let top = event.clientY - height - margin;
+    if (left + width > window.innerWidth - 8) left = event.clientX - width - margin;
+    if (top < 8) top = event.clientY + margin;
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `${top}px`;
+}
+
+function bindCodingEfficiencyInteractions(container) {
+    const tooltip = getCodingEfficiencyTooltip();
+    tooltip.style.display = 'none';
+
+    container.querySelectorAll('.coding-efficiency-track').forEach(track => {
+        track.addEventListener('mouseenter', event => {
+            tooltip.textContent = track.dataset.tooltip || '';
+            tooltip.style.display = 'block';
+            positionCodingEfficiencyTooltip(event);
+        });
+        track.addEventListener('mousemove', positionCodingEfficiencyTooltip);
+        track.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
+    });
+
+    container.querySelectorAll('.coding-efficiency-name').forEach(link => {
+        link.addEventListener('click', event => {
+            event.preventDefault();
+            const focusUserRow = () => {
+                const row = document.getElementById(getUserTableRowId(link.dataset.userLogin));
+                if (!row) return;
+                row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                row.classList.add('efficiency-linked-row');
+                window.setTimeout(() => row.classList.remove('efficiency-linked-row'), 1800);
+            };
+
+            const tableBody = document.getElementById('users-table-collapsible');
+            if (tableBody?.classList.contains('collapsed')) {
+                document.getElementById('users-toggle')?.click();
+                window.setTimeout(focusUserRow, 360);
+            } else {
+                focusUserRow();
+            }
+        });
+    });
+}
+
+function renderCodingEfficiencyChart(users) {
+    const container = document.getElementById('coding-efficiency-chart-container');
+    if (!container) return;
+
+    const minimumCodingLoc = 1000;
+    const minimumCredits = 1000;
+    const creditUnit = 1000;
+    const rankingSize = 20;
+    const entries = users
+        .map(user => {
+            const codingLoc = Number(user.code_loc_changed) || 0;
+            const visibleLicenses = getVisibleCreditLicenses(user);
+            const credits = visibleLicenses
+                .reduce((sum, license) => sum + (Number(license.used) || 0), 0);
+            const forecastOverspend = visibleLicenses.some(license => license.budget_sufficient === false);
+            return { user, codingLoc, credits, forecastOverspend, efficiency: credits > 0 ? codingLoc / credits * creditUnit : 0 };
+        })
+        .filter(entry => entry.codingLoc >= minimumCodingLoc && entry.credits >= minimumCredits)
+        .sort((a, b) => b.efficiency - a.efficiency || b.codingLoc - a.codingLoc || a.user.human_name.localeCompare(b.user.human_name));
+
+    if (!entries.length) {
+        container.innerHTML = `<p class="coding-efficiency-empty">No users in the current filters have at least ${formatNumber(minimumCodingLoc)} coding LOC and ${formatCredits(minimumCredits)} AI credits spent.</p>`;
+        return;
+    }
+
+    function buildRanking(entries, title, label) {
+        const maxEfficiency = Math.max(...entries.map(entry => entry.efficiency), 1);
+        return `<div class="coding-efficiency-panel">
+            <h3>${title}</h3>
+            <div class="coding-efficiency-chart" role="list" aria-label="${label}">
+                ${entries.map(entry => {
+                const percent = entry.efficiency / maxEfficiency * 100;
+                const name = entry.user.human_name || entry.user.user_login;
+                const detail = `${formatNumber(entry.codingLoc)} LOC / ${formatCredits(entry.credits)} credits`;
+                const roundedEfficiency = Math.round(entry.efficiency);
+                const forecastDetail = entry.forecastOverspend ? ' · Forecast: monthly AI-credit budget overrun' : '';
+                const tooltip = `${name}: ${roundedEfficiency} LOC per 1,000 credits (${detail})${forecastDetail}`;
+                return `<div class="coding-efficiency-row" role="listitem">
+                    <a class="coding-efficiency-name" href="#users-table" data-user-login="${entry.user.user_login}">${name}</a>
+                    <div class="coding-efficiency-track" data-tooltip="${tooltip}" aria-label="${tooltip}"><span class="coding-efficiency-bar${entry.forecastOverspend ? ' coding-efficiency-bar-risk' : ''}" style="width:${percent}%"></span></div>
+                    <div class="coding-efficiency-value">${roundedEfficiency} <span>LOC / 1K cr</span></div>
+                </div>`;
+                }).join('')}
+            </div>
+        </div>`;
+    }
+
+    const mostEfficient = entries.slice(0, rankingSize);
+    const leastEfficient = entries.slice(-rankingSize).reverse();
+    container.innerHTML = `<div class="coding-efficiency-rankings">
+            ${buildRanking(mostEfficient, `Top ${mostEfficient.length} most efficient`, 'Most efficient coding LOC per 1,000 AI credits spent')}
+            ${buildRanking(leastEfficient, `Top ${leastEfficient.length} least efficient`, 'Least efficient coding LOC per 1,000 AI credits spent')}
+        </div>
+        <p class="coding-efficiency-note">Coding LOC per 1,000 AI credits spent. Includes users with at least ${formatNumber(minimumCodingLoc)} coding LOC and ${formatCredits(minimumCredits)} credits spent; steering output is excluded. Coding output = suggested + applied LOC for programming languages; source figures appear on bar hover.<br><span class="coding-efficiency-risk-key">Red bars</span> indicate a forecast monthly AI-credit budget overrun.</p>`;
+    bindCodingEfficiencyInteractions(container);
+}
+
+function computeCodingLineChanges(users, month = '') {
+    const codingLocByDay = new Map();
+    for (const user of users) {
+        for (const daily of user.daily || []) {
+            if (!daily.day) continue;
+            const current = codingLocByDay.get(daily.day) || { added: 0, deleted: 0 };
+            current.added += Number(daily.code_loc_added) || 0;
+            current.deleted += Number(daily.code_loc_deleted) || 0;
+            codingLocByDay.set(daily.day, current);
+        }
+    }
+
+    if (month) {
+        const [year, monthNumber] = month.split('-').map(Number);
+        const daysInMonth = new Date(year, monthNumber, 0).getDate();
+        return Array.from({ length: daysInMonth }, (_, index) => {
+            const day = localISODate(new Date(year, monthNumber - 1, index + 1));
+            return { day, ...(codingLocByDay.get(day) || { added: 0, deleted: 0 }) };
+        });
+    }
+
+    const allDays = [...codingLocByDay.keys()].sort();
+    if (!allDays.length) return [];
+    const latestWeekStart = getWeekStart(allDays.at(-1));
+    const firstWeekStart = new Date(latestWeekStart);
+    firstWeekStart.setDate(firstWeekStart.getDate() - (WAU_WINDOW_WEEKS - 1) * 7);
+    const codingLocByWeek = new Map();
+
+    for (const [day, values] of codingLocByDay) {
+        const weekStart = getWeekStart(day);
+        if (weekStart < firstWeekStart || weekStart > latestWeekStart) continue;
+        const weekKey = localISODate(weekStart);
+        const current = codingLocByWeek.get(weekKey) || { added: 0, deleted: 0 };
+        current.added += values.added;
+        current.deleted += values.deleted;
+        codingLocByWeek.set(weekKey, current);
+    }
+
+    return Array.from({ length: WAU_WINDOW_WEEKS }, (_, index) => {
+        const weekStart = new Date(firstWeekStart);
+        weekStart.setDate(weekStart.getDate() + index * 7);
+        const weekEnd = new Date(weekStart);
+        weekEnd.setDate(weekEnd.getDate() + 6);
+        const weekKey = localISODate(weekStart);
+        return { weekStart: weekKey, weekEnd: localISODate(weekEnd), ...(codingLocByWeek.get(weekKey) || { added: 0, deleted: 0 }) };
+    });
+}
+
+function renderLinesChangedChart(users) {
+    const container = document.getElementById('lines-changed-chart-container');
+    if (!container) return;
+
+    const periods = computeCodingLineChanges(users, currentMonthFilter);
+    if (!periods.length) {
+        container.innerHTML = '<p style="color:var(--text-muted)">No coding LOC data available.</p>';
+        return;
+    }
+
+    const maxLoc = Math.max(...periods.flatMap(period => [period.added, period.deleted]), 0);
+    const locTickStep = 2500;
+    const yAxisMax = Math.max(10000, Math.ceil(maxLoc / locTickStep) * locTickStep);
+    const bars = periods.map(period => {
+        const addedHeight = Math.round(period.added / yAxisMax * LINES_CHANGED_CHART_HEIGHT);
+        const deletedHeight = Math.round(period.deleted / yAxisMax * LINES_CHANGED_CHART_HEIGHT);
+        const periodLabel = period.day
+            ? period.day
+            : `${formatCompactDate(period.weekStart)}-${formatCompactDate(period.weekEnd)}`;
+        const tooltip = `${periodLabel}: ${formatNumber(period.added)} LOC added, ${formatNumber(period.deleted)} LOC deleted`;
+        return `<div class="lines-changed-period" title="${tooltip}" aria-label="${tooltip}">
+            <span class="lines-changed-bar lines-changed-added" style="height:${addedHeight}px"></span>
+            <span class="lines-changed-bar lines-changed-deleted" style="height:${deletedHeight}px"></span>
+        </div>`;
+    }).join('');
+
+    const tickValues = Array.from(
+        { length: yAxisMax / locTickStep + 1 },
+        (_, index) => yAxisMax - index * locTickStep
+    );
+    const yAxisTicks = tickValues.map(value =>
+        `<span>${formatNumber(value)}</span>`
+    ).join('');
+    const gridLines = tickValues.map(value =>
+        `<span class="lines-changed-grid-line" style="bottom:${value / yAxisMax * 100}%"></span>`
+    ).join('');
+    const isMonthlyView = Boolean(currentMonthFilter);
+    const xAxisLabels = periods.map((period, index) => {
+        const isLastPeriod = index === periods.length - 1;
+        let label = '';
+        if (isMonthlyView) {
+            const date = new Date(period.day + 'T12:00:00');
+            const dayOfWeek = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'][date.getDay()];
+            const isWeekend = date.getDay() === 0 || date.getDay() === 6;
+            label = `${Number(period.day.slice(-2))}<span class="lines-changed-day-of-week${isWeekend ? ' lines-changed-weekend' : ''}">${dayOfWeek}</span>`;
+        } else if (index % 4 === 0 || isLastPeriod) {
+            label = `${period.weekStart.slice(8, 10)}.${period.weekStart.slice(5, 7)}`;
+        }
+        return `<span>${label}</span>`;
+    }).join('');
+
+    container.innerHTML = `
+        <div class="lines-changed-chart-shell">
+            <div class="lines-changed-y-axis" style="height:${LINES_CHANGED_CHART_HEIGHT}px">${yAxisTicks}</div>
+            <div class="lines-changed-plot">
+                <div class="lines-changed-chart" style="height:${LINES_CHANGED_CHART_HEIGHT}px">
+                    <div class="lines-changed-grid">${gridLines}</div>
+                    ${bars}
+                </div>
+                <div class="lines-changed-x-axis">${xAxisLabels}</div>
+            </div>
+        </div>
+        <div class="chart-legend lines-changed-legend">
+            <span><span class="legend-dot lines-changed-added"></span>LOC added</span>
+            <span><span class="legend-dot lines-changed-deleted"></span>LOC deleted</span>
+        </div>`;
 }
 
 function buildCombinedChart(daily, month, opts = {}) {
@@ -1916,6 +2332,25 @@ function renderDonutSection(filteredUsers) {
     document.getElementById('donut-activity').innerHTML = buildDonutChart(locByActivity,         'by Activity');
     document.getElementById('donut-feature').innerHTML  = buildDonutChart(locByCodeLanguage,     'Coding by Language');
     document.getElementById('donut-syntax').innerHTML   = buildDonutChart(locByDocLanguageNorm,  'Steering by Syntax');
+
+    const usersByBestStreak = {
+        'No activity': 0,
+        '1 day': 0,
+        '2-4 days': 0,
+        '5-7 days': 0,
+        '8-10 days': 0,
+        '11+ days': 0
+    };
+    for (const u of filteredUsers) {
+        const streak = Number(u.best_streak) || 0;
+        if (streak <= 0) usersByBestStreak['No activity']++;
+        else if (streak === 1) usersByBestStreak['1 day']++;
+        else if (streak <= 4) usersByBestStreak['2-4 days']++;
+        else if (streak <= 7) usersByBestStreak['5-7 days']++;
+        else if (streak <= 10) usersByBestStreak['8-10 days']++;
+        else usersByBestStreak['11+ days']++;
+    }
+    document.getElementById('donut-streak').innerHTML = buildDonutChart(usersByBestStreak, 'by Best Streak');
 
     // Phase distribution — null users count as phase 0 (No cohort)
     const usersByPhase = {};

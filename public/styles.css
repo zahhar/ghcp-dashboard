@@ -357,6 +357,13 @@ body {
     vertical-align: top;
 }
 
+/* Reallocate the first cell's existing horizontal padding for the row ordinal. */
+.data-table td:first-child {
+    position: relative;
+    padding-left: 1.5rem;
+    padding-right: 0;
+}
+
 .data-table tbody tr {
     transition: background-color 0.2s ease;
 }
@@ -394,6 +401,24 @@ body {
     display: flex;
     align-items: center;
     gap: 0.75rem;
+}
+
+.user-name-line {
+    display: inline-block;
+}
+
+/* Positioned inside the first cell so horizontal scrolling never clips it. */
+.user-row-ordinal {
+    position: absolute;
+    top: 0.75rem;
+    left: 0.05rem;
+    width: 1.4rem;
+    text-align: right;
+    color: var(--text-muted);
+    font-size: 0.7em;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    opacity: 0.7;
 }
 
 .avatar-placeholder {
@@ -710,6 +735,69 @@ body {
     min-width: 20px;
 }
 
+/* Fit every week from the rolling 52-week WAU view into the chart width. */
+.wau-chart {
+    gap: 1px;
+}
+
+.wau-chart .bar-col-combined {
+    min-width: 0;
+}
+
+.wau-chart .bar-label {
+    font-size: 0.55rem;
+}
+
+.wau-chart-title {
+    color: #7dd3fc;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.wau-percentage-chart {
+    padding-top: 1.8rem;
+}
+
+.wau-percentage-chart .bar-seg-dau {
+    background: linear-gradient(180deg, #38bdf8, #6366f1);
+}
+
+.wau-percent-label {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    color: #e0f2fe;
+    font-size: 0.65rem;
+    font-weight: 700;
+    line-height: 1.05;
+    text-align: center;
+    white-space: nowrap;
+    pointer-events: none;
+}
+
+.wau-count-label {
+    color: rgba(226, 232, 240, 0.6);
+    font-size: 0.55rem;
+    font-weight: 500;
+}
+
+.wau-tooltip {
+    position: fixed;
+    z-index: 9999;
+    padding: 0.45rem 0.6rem;
+    color: var(--text-main);
+    background: rgba(15, 23, 42, 0.98);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 6px;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+    font-size: 0.72rem;
+    font-weight: 600;
+    white-space: nowrap;
+    pointer-events: none;
+}
+
 .bar-area {
     position: relative;
     width: 100%;
@@ -846,6 +934,262 @@ body {
     background: #34d399;
     width: 100%;
     border-radius: 3px 3px 0 0;
+}
+
+/* Coding efficiency: direct, ranked comparison of coding LOC per credit. */
+.coding-efficiency-rankings {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2rem;
+}
+
+.coding-efficiency-panel h3 {
+    margin-bottom: 0.55rem;
+    color: var(--text-main);
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.coding-efficiency-chart {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    padding: 0.1rem 0;
+}
+
+.coding-efficiency-row {
+    display: grid;
+    grid-template-columns: 9rem minmax(3rem, 1fr) auto;
+    align-items: center;
+    column-gap: 0.75rem;
+    min-height: 1.75rem;
+}
+
+.coding-efficiency-name {
+    overflow: hidden;
+    color: var(--text-main);
+    font-size: 0.82rem;
+    font-weight: 500;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+a.coding-efficiency-name {
+    text-decoration: underline;
+    text-decoration-color: rgba(148, 163, 184, 0.4);
+    text-underline-offset: 0.15em;
+}
+
+a.coding-efficiency-name:hover,
+a.coding-efficiency-name:focus-visible {
+    color: #bae6fd;
+    text-decoration-color: currentColor;
+}
+
+.coding-efficiency-track {
+    height: 0.8rem;
+    background: rgba(148, 163, 184, 0.1);
+    cursor: help;
+}
+
+.coding-efficiency-bar {
+    display: block;
+    min-width: 2px;
+    height: 100%;
+    background: #64748b;
+}
+
+.coding-efficiency-bar-risk {
+    background: #ef4444;
+}
+
+.coding-efficiency-row:hover .coding-efficiency-bar {
+    background: #94a3b8;
+}
+
+.coding-efficiency-row:hover .coding-efficiency-bar-risk {
+    background: #f87171;
+}
+
+.coding-efficiency-value {
+    color: var(--text-main);
+    font-size: 0.78rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.coding-efficiency-value span,
+.coding-efficiency-note,
+.coding-efficiency-empty {
+    color: var(--text-muted);
+}
+
+.coding-efficiency-note,
+.coding-efficiency-empty {
+    margin-top: 0.75rem;
+    font-size: 0.75rem;
+    line-height: 1.4;
+}
+
+.coding-efficiency-risk-key {
+    color: #f87171;
+    font-weight: 600;
+}
+
+.coding-efficiency-tooltip {
+    position: fixed;
+    z-index: 9999;
+    max-width: 18rem;
+    padding: 0.45rem 0.6rem;
+    color: var(--text-main);
+    background: rgba(15, 23, 42, 0.98);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 6px;
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+    font-size: 0.72rem;
+    font-weight: 600;
+    line-height: 1.35;
+    pointer-events: none;
+}
+
+.data-table tbody tr.efficiency-linked-row {
+    background-color: rgba(56, 189, 248, 0.18);
+    outline: 1px solid rgba(125, 211, 252, 0.65);
+    outline-offset: -1px;
+}
+
+/* Coding-only LOC changed: paired added/deleted bars for each day or week. */
+.lines-changed-chart-shell {
+    display: flex;
+    align-items: flex-start;
+}
+
+.lines-changed-y-axis {
+    width: 3.25rem;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding-right: 0.55rem;
+    color: var(--text-muted);
+    font-size: 0.65rem;
+    line-height: 1;
+    text-align: right;
+}
+
+.lines-changed-plot {
+    flex: 1;
+    min-width: 0;
+}
+
+.lines-changed-chart {
+    position: relative;
+    display: flex;
+    align-items: flex-end;
+    gap: 1px;
+}
+
+.lines-changed-grid {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+
+.lines-changed-grid-line {
+    position: absolute;
+    left: 0;
+    right: 0;
+    border-top: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.lines-changed-x-axis {
+    display: flex;
+    gap: 1px;
+    margin-top: 0.35rem;
+    color: var(--text-muted);
+    font-size: 0.6rem;
+    line-height: 1;
+}
+
+.lines-changed-x-axis span {
+    flex: 1 1 0;
+    min-width: 0;
+    text-align: center;
+    white-space: nowrap;
+}
+
+.lines-changed-day-of-week {
+    display: block;
+    margin-top: 0.1rem;
+}
+
+.lines-changed-weekend {
+    color: rgba(239, 68, 68, 0.65);
+}
+
+.lines-changed-period {
+    flex: 1 1 0;
+    min-width: 0;
+    height: 100%;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 1px;
+    cursor: help;
+    z-index: 1;
+}
+
+.lines-changed-bar {
+    width: 38%;
+    min-width: 1px;
+    border-radius: 1px 1px 0 0;
+}
+
+.lines-changed-added {
+    background: #34d399;
+}
+
+.lines-changed-deleted {
+    background: #fb7185;
+}
+
+.lines-changed-legend {
+    margin-left: 3.25rem;
+}
+
+@media (max-width: 700px) {
+    .coding-efficiency-rankings {
+        grid-template-columns: 1fr;
+        gap: 1.5rem;
+    }
+
+    .coding-efficiency-row {
+        grid-template-columns: minmax(5rem, 1fr) minmax(4rem, 1fr);
+        row-gap: 0.2rem;
+    }
+
+    .coding-efficiency-value {
+        grid-column: 1 / -1;
+        text-align: right;
+    }
+
+    .lines-changed-y-axis {
+        width: 2.6rem;
+        font-size: 0.58rem;
+    }
+
+    .lines-changed-x-axis {
+        font-size: 0.52rem;
+    }
+
+    .lines-changed-x-axis span:nth-child(odd) {
+        visibility: hidden;
+    }
+
+    .lines-changed-legend {
+        margin-left: 2.6rem;
+    }
 }
 
 .dau-count-label {

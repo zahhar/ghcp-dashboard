@@ -8,19 +8,18 @@ A guide to every number, chart, and column in the GitHub Copilot Dashboard.
 
 1. [Key concepts](#1-key-concepts)
 2. [Top summary widgets](#2-top-summary-widgets)
-3. [Daily Active Users chart](#3-daily-active-users-chart)
-4. [User table columns](#4-user-table-columns)
+3. [Daily and Weekly Active Users chart](#3-daily-and-weekly-active-users-chart)
+4. [Lines changed by AI chart](#4-lines-changed-by-ai-chart)
+5. [Individual User Metrics table](#5-individual-user-metrics-table)
    - [Output](#output)
-   - [Turns](#turns)
    - [Steering](#steering)
    - [Coding](#coding)
+   - [Turns](#turns)
    - [Perf](#perf)
-   - [Language](#language)
-   - [Model](#model)
-   - [IDE](#ide)
-   - [Days](#days)
-   - [Last Active](#last-active)
-5. [Output breakdown donuts](#5-output-breakdown-donuts)
+   - [AI Credits](#ai-credits)
+   - [Environment](#environment)
+   - [Activity](#activity)
+6. [Output breakdown donuts](#6-output-breakdown-donuts)
    - [by Model](#by-model)
    - [By Model class](#by-model-class)
    - [by Feature](#by-feature)
@@ -28,9 +27,11 @@ A guide to every number, chart, and column in the GitHub Copilot Dashboard.
    - [by Activity](#by-activity)
    - [Coding by Language](#coding-by-language)
    - [Steering by Syntax](#steering-by-syntax)
-6. [Maturity metrics](#6-maturity-metrics)
+   - [by Best Streak](#by-best-streak)
+7. [Maturity metrics](#7-maturity-metrics)
    - [Status colors](#status-colors)
    - [Rules and thresholds](#rules-and-thresholds)
+8. [Coding Efficiency chart](#8-coding-efficiency-chart)
 
 ---
 
@@ -54,6 +55,8 @@ A guide to every number, chart, and column in the GitHub Copilot Dashboard.
 
 **Turns** — sum of user chat interactions and CLI requests. Formula: `user_initiated_interaction_count + totals_by_cli.request_count`. Tracks engagement intensity and frequency of AI tool usage.
 
+**AI credits** — consumption reported by GitHub as `ai_credits_used` in each per-user daily report. It is a consumption-analysis metric, not an invoicing total, and is not broken down by feature, model, or surface. Credits are attributed per license (account + organization, or enterprise when organization is unavailable), so licenses belonging to the same person are not merged.
+
 ---
 
 ## 2. Top summary widgets
@@ -65,30 +68,38 @@ A guide to every number, chart, and column in the GitHub Copilot Dashboard.
 | **Total Users** | Number of users with at least one activity record in the selected period. |
 | **Total Turns** | Sum of all Chat asks and Agent runs across all users. A rough measure of overall AI engagement volume. |
 | **Total Output** | Sum of suggested LOC + applied LOC across all users. The broadest signal of how much GHCP was used. |
+| **AI Credits** | Total AI credits consumed by the filtered licenses in the selected period. |
 
 When a specific month is selected, each widget also shows a delta badge (▲/▼ %) compared to the previous month.
 
 ---
 
-## 3. Daily Active Users chart
+## 3. Daily and Weekly Active Users chart
 
 ![Daily Active Users chart](/docs/dau.jpg)
 
-Each bar represents one calendar day. The bar height and numbers above it (absolute and percentage of total users) show how many distinct users were active that day (i.e., had at least one recorded interaction).
+With a **month selected**, each bar represents one calendar day. The bar height and numbers above it (absolute users first, then percentage of total users) show how many distinct users were active that day (i.e., had at least one recorded interaction).
 
 Saturdays and Sundays are highlighted with a red day label and excluded from average calculations together with days where no data available. 
 
 National or Bank holidays are not observed. 
 
-**Average metrics** (top-right of the chart) — three statistics summarising the selected period.
+**Average metrics** (top-right of the chart) summarise the selected period.
 
 | Metric | Formula | Unit | 🔑 Key insight |
 |---|---|---|---|
 | **Avg DAU** | `sum(DAU on active business days) / count(active business days)`, the % shown is `avg_dau / total_users × 100`. | users/day, % | Baseline for daily reach — how many users actually use tool during typical workday. Target for at least 2/3 of total users. |
 | **Avg Turns** | `total_turns / total_users` | turns/user | Tracks per-user engagement intensity. A rising trend signals the team is using Copilot more frequently: longer sessions. High values may signal people are not using agentic long-running sessions but more enagged with chat conversations to GHCP.  |
+| **Avg Credits** | `total_ai_credits / non_revoked_users` | credits/user | Average consumption per user for the selected period. License consumption is summed only for this team-level average; per-license values remain separate in the table. |
 | **Avg Perf** | `sum(perf_score per active user) / count(active users)` | LOC / user / day | Tracks team-wide coding throughput over time. Compare months to see whether velocity is improving. |
 
-**All-time view** shows the trailing 30 days from the most recent day with any data.  
+**All-times view** changes the chart to **Weekly Active Users (WAU)** and shows a rolling 52-week window ending with the Monday–Sunday week containing the most recent activity record.
+
+- One bar represents one complete calendar week, from Monday through Sunday; the label under each bar is its ISO week number.
+- A user is counted once per week, even when active on multiple days.
+- The blue bar height and prominent label show `WAU / currently filtered population × 100`; the smaller number below is the absolute active-user count.
+- Hovering a bar shows its `DD.MM.YYYY-DD.MM.YYYY` date range plus both the WAU percentage and active-user count.
+- The top summary changes to **Avg WAU**: the average weekly active-user count across the displayed 52 weeks, with its percentage of the currently filtered population.
 
 **Month view** shows every calendar day of the selected month, including future days with zero bars.
 
@@ -96,7 +107,19 @@ National or Bank holidays are not observed.
 
 ---
 
-## 4. Individual User Metrics table
+## 4. Lines changed by AI chart
+
+Shows **applied coding LOC only**, split into paired bars: green for `LOC added` and red for `LOC deleted`. Steering/document and prompt-file LOC, suggested LOC, and grand totals are excluded.
+
+- **Month view:** one pair of bars per calendar day, labelled with day of month and weekday.
+- **All-time view:** one pair per Monday–Sunday week, using the same rolling 52-week window as the WAU chart.
+- **Y-axis:** horizontal grid lines at `0`, `2,500`, `5,000`, `7,500`, and `10,000` LOC; the scale extends in further `2,500`-LOC steps when needed.
+
+Hover a bar pair for the exact period and added/deleted LOC values. The chart reflects the currently filtered users.
+
+---
+
+## 5. Individual User Metrics table
 
 ![Individual User Metrics table](/docs/table.jpg)
 
@@ -112,18 +135,6 @@ The broadest measure of a user's GHCP volume for the period.
 | ✏️ 3rd line | Applied LOC | `loc_added + loc_deleted` — what was actually written to files. |
 
 🔑 A large gap between Suggested and Applied means the user frequently edits or rejects completions before accepting, or telemetry is not working properly.
-
----
-
-### Turns
-
-| Line | Value | Meaning |
-|---|---|---|
-| **Main** | Total turns | `user_initiated_interaction_count + cli_request_count` — sum of user-initiated chat interactions and CLI requests. |
-| 🏃 2nd line | Code generation activity | `code_generation_activity_count` — count of automatic code generation events. |
-| 🎯 3rd line | Code acceptance activity | `code_acceptance_activity_count` — count of code completions the user accepted. |
-
-A month-over-month delta badge on the main number shows trend direction.
 
 ---
 
@@ -167,6 +178,18 @@ The month-over-month percentage badge shows whether the user's code output is gr
 
 ---
 
+### Turns
+
+| Line | Value | Meaning |
+|---|---|---|
+| **Main** | Total turns | `user_initiated_interaction_count + cli_request_count` — sum of user-initiated chat interactions and CLI requests. |
+| 🏃 2nd line | Code generation activity | `code_generation_activity_count` — count of automatic code generation events. |
+| 🎯 3rd line | Code acceptance activity | `code_acceptance_activity_count` — count of code completions the user accepted. |
+
+A month-over-month delta badge on the main number shows trend direction.
+
+---
+
 ### Perf
 
 A daily throughput score that normalises output for users who were only active part of the period.
@@ -185,53 +208,33 @@ Hover the cell for the raw value.
 
 ---
 
-### Language
+### AI Credits
 
-The programming language that accounts for the most of the user's code LOC, with the percentage shown underneath. Hover to see the full list of languages this user worked in.
+Each visible license is shown separately; a user with licenses from multiple organizations may therefore have multiple entries. Exact-zero entries are hidden.
 
-🔑 Useful for mapping GHCP adoption to specific tech stacks.
+- **Current month:** `consumed/monthly budget (utilization %)`, a progress bar, and an end-of-month forecast. The forecast extrapolates consumption from the organization/enterprise reporting cutoff through the number of calendar days in the month. Red means the projected consumption exceeds the configured `monthly_ai_credits_per_user`; green means the budget is expected to be sufficient.
+- **Any past month:** shows consumption, budget, utilization, and progress, but no forecast.
+- **All times:** shows only total credits consumed by the license; budget, utilization, progress, and forecast are hidden because a single monthly budget is not meaningful across multiple months.
 
----
-
-### Model
-
-The AI model that generated the largest share of the user's code LOC, with the percentage shown underneath. Hover to see all models used.
-
-🔑 Frequent usage oif cheap non-reasoning models (GPT-4x) may signat that user ran out oif premium request quota. Sticking to most expensive model only (Claude Opus 4.6 at the time of writing) while using Business plan (limited to 300 premium requests at the time of writing, that translated in just 100 requests to Opus 4.6) may signal user needs more training on model selection appropriate for the task, or upgrading their plan. 
+The user popup adds daily AI-credit consumption to the corresponding license chart. Credits are not added to the combined multi-license chart.
 
 ---
 
-### IDE
+### Environment
 
-The development environment that handled the most of the user's LOC, with the percentage shown underneath. The Copilot **CLI** is treated as a virtual IDE (shown as `cli`), so a user who produces most of their LOC via the CLI shows `cli` here instead of a dash. Hover to see all IDEs used. Exact IDE version is available in user details pop-up.
-
----
-
-### Days
-
-| Line | Value | Meaning |
-|---|---|---|
-| **Main** | Active days | Number of distinct calendar days with any GHCP activity. |
-| 🤖 2nd line | Agent days | Days on which the user invoked GHCP Agent mode at least once. |
-| 💬 3rd line | Chat days | Days on which the user had at least one Chat interaction. |
-
-Agent days and Chat days typically overlap.
-
-🔑 Look for missing or very low Agent days compared to Chat days. Normally they shoudl be on-par. 
+Three compact lines show the user's favorite **language**, **model**, and **IDE**, each with its share of activity. The Copilot CLI is treated as a virtual IDE. Hover for complete lists and IDE/plugin version details; ⚠️ marks an outdated primary IDE or plugin.
 
 ---
 
-### Last Active
+### Activity
 
-Date of the user's most recent GHCP activity record (format `DD.MM.YYYY`), with a human-friendly relative label underneath ("yesterday", "3 days ago", etc.). 
-
-🔑 A quick signal for identifying users who have stopped engaging (unless sick / leave).
+Shows the most recent activity date, best uninterrupted working-day streak, and a horizontal row of usage-day counts: 🤖 Agent, 💬 Chat, ⌨️ CLI, and—when present—🔍 Code Review and ☁️ Cloud Agent. Hover for the relative last-active time and total active-day count. Activity is sorted by the last active date.
 
 ---
 
-## 5. Output breakdown charts
+## 6. Output breakdown charts
 
-All six donuts reflect the **currently filtered user set** (team filter and month filter apply). Each segment shows the share of total LOC for that dimension. Segments below 3% are excluded from labels; segments below 5% do not show a percentage on the ring. Hover any segment for the exact name and percentage.
+All donuts reflect the **currently filtered user set** (team, scope, status, search, and manager filters apply). Unless stated otherwise, each segment shows the share of total LOC for that dimension. Segments below 3% are excluded from labels; segments below 5% do not show a percentage on the ring. Hover any segment for the exact name and percentage.
 
 ![Output breakdown charts](/docs/screenshot3.jpg)
 
@@ -285,7 +288,22 @@ Share of **steering output LOC** (suggested + applied) broken down by document t
 
 ---
 
-## 6. Maturity metrics
+### by Best Streak
+
+Share of filtered **users** (not LOC) grouped by their best activity streak in the selected period. The value is the same longest uninterrupted run of active **working days** shown in the table's Activity column; weekends do not break a streak.
+
+| Bucket | Best streak |
+|---|---|
+| No activity | no data or 0 days |
+| 1 day | 1 day |
+| 2–4 days | 2 to 4 days, inclusive |
+| 5–7 days | 5 to 7 days, inclusive |
+| 8–10 days | 8 to 10 days, inclusive |
+| 11+ days | 11 or more days |
+
+---
+
+## 7. Maturity metrics
 
 The **AI Maturity** block evaluates the currently filtered team (same filters as table/charts) using rule-based statuses from `public/maturity-rules.js`.
 
@@ -314,3 +332,15 @@ The **AI Maturity** block evaluates the currently filtered team (same filters as
 >
 > - Licence rule evaluates account-level usage from `account_daily` + account enterprise attribution.
 > - In user popup, preferred-enterprise accounts with no activity are marked with 🔴 near account title and in no-data message.
+
+---
+
+## 8. Coding Efficiency chart
+
+Shows the **top 20 most efficient** and **top 20 least efficient** users in the currently filtered set. Efficiency is calculated as:
+
+`coding LOC / AI credits spent × 1,000`
+
+Coding LOC is suggested + applied LOC in programming-language files; steering/document and prompt-file output is excluded. Users appear only after reaching both **1,000 coding LOC** and **1,000 AI credits spent**.
+
+Hover a bar for the source coding-LOC and credit figures. Select a user name to jump to that user's row in the table. **Red bars** indicate that at least one visible license is forecast to exceed its monthly AI-credit budget.
