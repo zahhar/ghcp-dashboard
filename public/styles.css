@@ -357,10 +357,9 @@ body {
     vertical-align: top;
 }
 
-/* Reallocate the first cell's existing horizontal padding for the row ordinal. */
+/* Keep the first user cell aligned with the remaining table cells. */
 .data-table td:first-child {
-    position: relative;
-    padding-left: 1.5rem;
+    padding-left: 0.75rem;
     padding-right: 0;
 }
 
@@ -404,15 +403,16 @@ body {
 }
 
 .user-name-line {
-    display: inline-block;
+    display: inline-flex;
+    align-items: baseline;
 }
 
-/* Positioned inside the first cell so horizontal scrolling never clips it. */
+/* Keep the ordinal in normal flow so table-cell clipping cannot hide it. */
 .user-row-ordinal {
-    position: absolute;
-    top: 0.75rem;
-    left: 0.05rem;
-    width: 1.4rem;
+    display: inline-block;
+    flex: 0 0 3ch;
+    width: 3ch;
+    margin-right: 0.5rem;
     text-align: right;
     color: var(--text-muted);
     font-size: 0.7em;

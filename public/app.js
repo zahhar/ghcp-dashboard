@@ -1362,7 +1362,17 @@ function openUserModal(user) {
         chartHTML = buildLicenseCharts(onlyLogin, user.daily || [], warning);
     }
 
-    document.getElementById('modal-body').innerHTML = chartHTML + buildUserMetaSection(user, { showIdes: showIdesInMeta });
+    const linesChangedChart = buildLinesChangedChart(
+        computeCodingLineChanges([user], currentMonthFilter),
+        currentMonthFilter,
+        { dynamicScale: true }
+    );
+    document.getElementById('modal-body').innerHTML = chartHTML
+        + buildUserMetaSection(user, { showIdes: showIdesInMeta })
+        + `<div class="user-meta-section user-lines-changed-section">
+            <div class="chart-section-title">Lines changed by AI</div>
+            ${linesChangedChart}
+        </div>`;
     overlay.style.display = 'flex';
 
     function close() {
@@ -1971,14 +1981,40 @@ function renderLinesChangedChart(users) {
     if (!container) return;
 
     const periods = computeCodingLineChanges(users, currentMonthFilter);
+    container.innerHTML = buildLinesChangedChart(periods, currentMonthFilter);
+}
+
+function getLinesChangedAxis(maxLoc, dynamicScale) {
+    if (!dynamicScale) {
+        const tickStep = 2500;
+        return {
+            tickStep,
+            max: Math.max(10000, Math.ceil(maxLoc / tickStep) * tickStep)
+        };
+    }
+
+    // Use roughly four rounded intervals so a user's smaller values remain readable.
+    const targetIntervals = 4;
+    const rawStep = Math.max(maxLoc, 1) / targetIntervals;
+    const magnitude = 10 ** Math.floor(Math.log10(rawStep));
+    const normalizedStep = rawStep / magnitude;
+    const stepMultiplier = normalizedStep <= 1 ? 1
+        : normalizedStep <= 2 ? 2
+            : normalizedStep <= 5 ? 5 : 10;
+    const tickStep = stepMultiplier * magnitude;
+    return {
+        tickStep,
+        max: Math.ceil(Math.max(maxLoc, 1) / tickStep) * tickStep
+    };
+}
+
+function buildLinesChangedChart(periods, month = '', opts = {}) {
     if (!periods.length) {
-        container.innerHTML = '<p style="color:var(--text-muted)">No coding LOC data available.</p>';
-        return;
+        return '<p style="color:var(--text-muted)">No coding LOC data available.</p>';
     }
 
     const maxLoc = Math.max(...periods.flatMap(period => [period.added, period.deleted]), 0);
-    const locTickStep = 2500;
-    const yAxisMax = Math.max(10000, Math.ceil(maxLoc / locTickStep) * locTickStep);
+    const { tickStep: locTickStep, max: yAxisMax } = getLinesChangedAxis(maxLoc, opts.dynamicScale);
     const bars = periods.map(period => {
         const addedHeight = Math.round(period.added / yAxisMax * LINES_CHANGED_CHART_HEIGHT);
         const deletedHeight = Math.round(period.deleted / yAxisMax * LINES_CHANGED_CHART_HEIGHT);
@@ -1993,7 +2029,7 @@ function renderLinesChangedChart(users) {
     }).join('');
 
     const tickValues = Array.from(
-        { length: yAxisMax / locTickStep + 1 },
+        { length: Math.round(yAxisMax / locTickStep) + 1 },
         (_, index) => yAxisMax - index * locTickStep
     );
     const yAxisTicks = tickValues.map(value =>
@@ -2002,7 +2038,7 @@ function renderLinesChangedChart(users) {
     const gridLines = tickValues.map(value =>
         `<span class="lines-changed-grid-line" style="bottom:${value / yAxisMax * 100}%"></span>`
     ).join('');
-    const isMonthlyView = Boolean(currentMonthFilter);
+    const isMonthlyView = Boolean(month);
     const xAxisLabels = periods.map((period, index) => {
         const isLastPeriod = index === periods.length - 1;
         let label = '';
@@ -2017,7 +2053,7 @@ function renderLinesChangedChart(users) {
         return `<span>${label}</span>`;
     }).join('');
 
-    container.innerHTML = `
+    return `
         <div class="lines-changed-chart-shell">
             <div class="lines-changed-y-axis" style="height:${LINES_CHANGED_CHART_HEIGHT}px">${yAxisTicks}</div>
             <div class="lines-changed-plot">
@@ -2042,17 +2078,12 @@ function buildCombinedChart(daily, month, opts = {}) {
 
     const allDays = fillDailyGaps(daily, month);
 
-    const maxLoc = Math.max(...allDays.map(d => (d.code_loc||0) + (d.doc_loc||0)), 1);
     const maxTurns = Math.max(...allDays.map(d => (d.user_initiated||0) + (d.code_generation||0) + (d.cli_turns||0)), 1);
     const maxCredits = Math.max(...allDays.map(d => d.ai_credits_used || 0), 1);
     const chartH = USER_CHART_HEIGHT;
 
     let bars = '';
     for (const d of allDays) {
-        const codeLoc = d.code_loc || 0;
-        const docLoc = d.doc_loc || 0;
-        const totalLoc = codeLoc + docLoc;
-        const locBottom = Math.round((totalLoc / maxLoc) * chartH);
         const credits = d.ai_credits_used || 0;
         const creditsBottom = Math.round((credits / maxCredits) * chartH);
 
@@ -2066,7 +2097,6 @@ function buildCombinedChart(daily, month, opts = {}) {
         const label = parts[2] + '.' + parts[1];
         const dowStyle = d.isWeekend ? 'color:rgba(239,68,68,0.5)' : '';
 
-        const locTitle = `Output LOC: ${formatNumber(totalLoc)} (Coding: ${formatNumber(codeLoc)}, Steering: ${formatNumber(docLoc)})`;
         const turnsTitle = `Turns: ${turnsTotal} (Chat asks: ${d.user_initiated||0}, Agent/CodeGen: ${d.code_generation||0}, CLI: ${cliTurns})${opts.showCredits ? ` | AI credits: ${formatCredits(credits)}` : ''}`;
         const totalLabel = turnsTotal > 0 ? `<span class="bar-turns-total">${turnsTotal}</span>` : '';
 
@@ -2079,7 +2109,6 @@ function buildCombinedChart(daily, month, opts = {}) {
                         <div class="bar-seg-codegen" style="height:${hGen}px"></div>
                         <div class="bar-seg-cli" style="height:${hCli}px"></div>
                     </div>
-                    ${totalLoc ? `<div class="loc-step" style="bottom:${locBottom}px" title="${locTitle}"><span class="loc-val">${formatNumber(totalLoc)}</span></div>` : ''}
                     ${opts.showCredits && credits ? `<div class="credits-step" style="bottom:${creditsBottom}px" title="AI credits: ${formatCredits(credits)}"><span class="credits-val">${formatCredits(credits)}</span></div>` : ''}
                 </div>
                 <span class="bar-label">${label}<br><span style="${dowStyle}">${d.dow}</span></span>
@@ -2092,7 +2121,6 @@ function buildCombinedChart(daily, month, opts = {}) {
             <span><span class="legend-dot" style="background:#818cf8"></span>Chat asks</span>
             <span><span class="legend-dot" style="background:#38bdf8"></span>Agent/CodeGen</span>
             <span><span class="legend-dot" style="background:#34d399"></span>CLI</span>
-            <span style="margin-left:0.5rem;padding-left:0.75rem;border-left:1px solid rgba(255,255,255,0.1)"><span class="legend-line"></span>Total Output LOC</span>
             ${opts.showCredits ? '<span><span class="legend-line legend-line-credits"></span>AI Credits</span>' : ''}
         </div>`;
 }

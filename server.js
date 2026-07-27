@@ -390,16 +390,19 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                 // Subtract it so the daily "Chat asks" segment only reflects genuine chat/agent turns.
                 const entryCliPrompts = entry.totals_by_cli?.prompt_count || 0;
                 const entryChatInitiated = Math.max(0, (entry.user_initiated_interaction_count || 0) - entryCliPrompts);
+                // The green CLI chart segment is intentionally based only on request_count.
+                // prompt_count can be zero even when CLI requests were made.
+                const entryCliRequests = Number(entry.totals_by_cli?.request_count) || 0;
 
                 if (!stats.daily[entry.day]) {
                     stats.daily[entry.day] = { user_initiated: 0, code_generation: 0, code_loc: 0, doc_loc: 0, code_loc_added: 0, code_loc_deleted: 0, cli_turns: 0 };
                 }
                 stats.daily[entry.day].user_initiated += entryChatInitiated;
                 stats.daily[entry.day].code_generation += (entry.code_generation_activity_count || 0);
-                stats.daily[entry.day].cli_turns += entryCliPrompts;
+                stats.daily[entry.day].cli_turns += entryCliRequests;
                 licenseDay.user_initiated += entryChatInitiated;
                 licenseDay.code_generation += (entry.code_generation_activity_count || 0);
-                licenseDay.cli_turns += entryCliPrompts;
+                licenseDay.cli_turns += entryCliRequests;
                 licenseDay.ai_credits_used += Number(entry.ai_credits_used) || 0;
 
                 // Per-account daily tracking (rawLogin is the actual account login)
@@ -411,7 +414,7 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                     }
                     stats.accountDaily[rawLogin][entry.day].user_initiated += entryChatInitiated;
                     stats.accountDaily[rawLogin][entry.day].code_generation += (entry.code_generation_activity_count || 0);
-                    stats.accountDaily[rawLogin][entry.day].cli_turns += entryCliPrompts;
+                    stats.accountDaily[rawLogin][entry.day].cli_turns += entryCliRequests;
                 } else {
                     // Entry came from the canonical account — track under its login
                     if (!stats.accountDaily[rawLogin]) stats.accountDaily[rawLogin] = {};
@@ -420,7 +423,7 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                     }
                     stats.accountDaily[rawLogin][entry.day].user_initiated += entryChatInitiated;
                     stats.accountDaily[rawLogin][entry.day].code_generation += (entry.code_generation_activity_count || 0);
-                    stats.accountDaily[rawLogin][entry.day].cli_turns += entryCliPrompts;
+                    stats.accountDaily[rawLogin][entry.day].cli_turns += entryCliRequests;
                 }
             }
 
