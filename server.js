@@ -329,8 +329,8 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                     accountIdes: {},   // { [login]: { ides: {name:loc}, ideVersions: {name:{...}} } }
                     accountCli: {},    // { [login]: { cli_version, last_seen_day } }
                     accountEnterpriseIds: {}, // { [login]: Set<enterprise_id> }
-                    allLocByModel: {},                // all-surface model aggregation (with fallback from feature)
-                    allLocByModel_chat_strict: {},    // chat-only model aggregation from totals_by_language_model (no fallback)
+                    allLocByModel: {},                // all-surface model aggregation, including chat interaction fallback
+                    allLocByModel_chat_strict: {},    // model aggregation used by the dashboard's Model donut, including chat fallback
                     allLocByLanguage: {},
                     features: {},        // { [feature]: value } — with fallback (mixed LOC + events)
                     features_loc_strict: {},  // { [feature]: LOC_only } — pure LOC, no fallback
@@ -509,6 +509,10 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                 }
             }
 
+            // `totals_by_language_model` only contains LOC-oriented activity. Keep track
+            // of models it successfully attributes so chat-only model activity from
+            // `totals_by_model_feature` can be added as a fallback without double-counting.
+            const modelsWithLanguageActivity = new Set();
             if (Array.isArray(entry.totals_by_language_model)) {
                 for (const tm of entry.totals_by_language_model) {
                     const lang = (tm.language || 'unknown').toLowerCase();
@@ -521,9 +525,10 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                     // Track in comprehensive maps (used for donut charts and now also for favorites)
                     if (tm.model && totalActivity > 0) {
                         stats.allLocByModel[tm.model] = (stats.allLocByModel[tm.model] || 0) + totalActivity;
-                        // Also populate chat-strict map (no fallback, only from totals_by_language_model)
+                        // Also populate the dashboard's model-breakdown map.
                         stats.allLocByModel_chat_strict[tm.model] = (stats.allLocByModel_chat_strict[tm.model] || 0) + totalActivity;
                         stats.models[tm.model] = (stats.models[tm.model] || 0) + totalActivity;
+                        modelsWithLanguageActivity.add(tm.model);
                     }
                     if (tm.language && totalActivity > 0) {
                         stats.allLocByLanguage[tm.language] = (stats.allLocByLanguage[tm.language] || 0) + totalActivity;
@@ -539,7 +544,7 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
 
             // Fallback: If totals_by_language_model is empty (e.g., Visual Studio code completion),
             // extract language data from totals_by_language_feature to ensure we track language usage.
-            // NOTE: This populates allLocByModel (all-surface) but NOT allLocByModel_chat_strict (chat-only).
+            // NOTE: This populates language usage only; it has no model dimension.
             if (Array.isArray(entry.totals_by_language_model) && entry.totals_by_language_model.length === 0) {
                 if (Array.isArray(entry.totals_by_language_feature)) {
                     for (const lf of entry.totals_by_language_feature) {
@@ -678,6 +683,17 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                     if (fValue > 0) {
                         if (!stats.modelFeatures[mf.model]) stats.modelFeatures[mf.model] = {};
                         stats.modelFeatures[mf.model][mf.feature] = (stats.modelFeatures[mf.model][mf.feature] || 0) + fValue;
+
+                        // Chat interactions have no LOC and therefore do not appear in
+                        // totals_by_language_model. Attribute them to the model here so
+                        // favorite-model selection and model donuts include chat-only use.
+                        // Do not add a fallback for a model already represented by LOC in
+                        // this record; that LOC remains the established ranking signal.
+                        if (!modelsWithLanguageActivity.has(mf.model)) {
+                            stats.allLocByModel[mf.model] = (stats.allLocByModel[mf.model] || 0) + fValue;
+                            stats.allLocByModel_chat_strict[mf.model] = (stats.allLocByModel_chat_strict[mf.model] || 0) + fValue;
+                            stats.models[mf.model] = (stats.models[mf.model] || 0) + fValue;
+                        }
                     }
                 }
             }
