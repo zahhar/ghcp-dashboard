@@ -71,10 +71,14 @@ cp "$SOURCE_ROOT/Dockerfile" "$workdir/"
 cp "$SOURCE_ROOT/.dockerignore" "$workdir/"
 cp "$SOURCE_ROOT/server.js" "$workdir/"
 cp -R "$SOURCE_ROOT/public/." "$workdir/public/"
-cp "$SOURCE_ROOT/data/data.json" "$workdir/data/"
 cp "$SOURCE_ROOT/data/config.json" "$workdir/data/"
 cp "$SOURCE_ROOT/data/users.json" "$workdir/data/"
 cp "$SOURCE_ROOT/data/teams.json" "$workdir/data/"
+
+# data.json is filtered per-enterprise (filter_to_known_users) for the deploy bundle only;
+# the source data/data.json is never touched.
+echo "🔎 Filtering data.json for deployment (filter_to_known_users)…"
+node "$SOURCE_ROOT/scripts/filter-deploy-data.js" "$SOURCE_ROOT" "$workdir/data/data.json"
 
 mkdir -p "$workdir/k8s"
 cp "$SOURCE_ROOT/k8s/deployment.yaml" "$workdir/k8s/"

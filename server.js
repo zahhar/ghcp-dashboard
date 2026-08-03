@@ -2,6 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const readline = require('readline');
 const path = require('path');
+const zlib = require('zlib');
 
 // ── Load .env ───────────────────────────────────────────────────────────
 const envPath = path.join(__dirname, '.env');
@@ -33,6 +34,44 @@ const DATA_FILE = path.join(DATA_ROOT, 'data.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 // Value for the Access-Control-Allow-Origin header; restrict to a specific domain in production
 const CORS_ORIGIN = '*';
+
+// Extensions worth compressing on the fly; binary/already-compressed assets (images) are skipped.
+const COMPRESSIBLE_EXTENSIONS = new Set(['.html', '.js', '.css', '.json', '.svg']);
+
+// Picks the best encoding both the client and this handler support, preferring brotli's higher ratio.
+function pickEncoding(req) {
+    const acceptEncoding = req.headers['accept-encoding'] || '';
+    if (/\bbr\b/.test(acceptEncoding)) return 'br';
+    if (/\bgzip\b/.test(acceptEncoding)) return 'gzip';
+    return null;
+}
+
+// Writes a response body compressed per Accept-Encoding, falling back to plain output if the
+// client doesn't support compression or compression fails. Used for both static files and the
+// /api/stats JSON payload, which can be several MB uncompressed.
+function sendCompressed(req, res, statusCode, headers, body) {
+    const buffer = Buffer.isBuffer(body) ? body : Buffer.from(body, 'utf-8');
+    const finalHeaders = Object.assign({}, headers, { Vary: 'Accept-Encoding' });
+    const encoding = pickEncoding(req);
+
+    if (!encoding) {
+        res.writeHead(statusCode, finalHeaders);
+        res.end(buffer);
+        return;
+    }
+
+    const compress = encoding === 'br' ? zlib.brotliCompress : zlib.gzip;
+    compress(buffer, (err, compressed) => {
+        if (err) {
+            res.writeHead(statusCode, finalHeaders);
+            res.end(buffer);
+            return;
+        }
+        finalHeaders['Content-Encoding'] = encoding;
+        res.writeHead(statusCode, finalHeaders);
+        res.end(compressed);
+    });
+}
 
 // Helper to handle static files
 const mimeTypes = {
@@ -99,8 +138,7 @@ function serveStaticFile(req, res) {
     fs.readFile(filePath, (error, content) => {
         if (error) {
             if (error.code == 'ENOENT') {
-                res.writeHead(404, { 'Content-Type': 'text/html' });
-                res.end('<h1>404 Not Found</h1>', 'utf-8');
+                sendCompressed(req, res, 404, { 'Content-Type': 'text/html' }, '<h1>404 Not Found</h1>');
             } else {
                 res.writeHead(500);
                 res.end('Sorry, check with the site admin for error: ' + error.code + ' ..\n');
@@ -110,8 +148,12 @@ function serveStaticFile(req, res) {
             if (extname === '.js' || extname === '.css') {
                 headers['Cache-Control'] = 'no-store';
             }
-            res.writeHead(200, headers);
-            res.end(content, 'utf-8');
+            if (COMPRESSIBLE_EXTENSIONS.has(extname)) {
+                sendCompressed(req, res, 200, headers, content);
+            } else {
+                res.writeHead(200, headers);
+                res.end(content, 'utf-8');
+            }
         }
     });
 }
@@ -1204,12 +1246,10 @@ const server = http.createServer(async (req, res) => {
                 }
             }
 
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify(data));
+            sendCompressed(req, res, 200, { 'Content-Type': 'application/json' }, JSON.stringify(data));
         } catch (error) {
             console.error(error);
-            res.writeHead(500, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Internal Server Error' }));
+            sendCompressed(req, res, 500, { 'Content-Type': 'application/json' }, JSON.stringify({ error: 'Internal Server Error' }));
         }
     } else {
         serveStaticFile(req, res);
