@@ -292,6 +292,35 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
         }
     }
 
+    // Enterprise/organization membership reflects license allocation, not usage — so it must be
+    // computed from the full dataset regardless of monthFilter. Otherwise a licensed user with no
+    // activity in the selected period would look like they belong to no enterprise at all, and
+    // would vanish when the dashboard is filtered down to that enterprise.
+    const allTimeEnterpriseIdsByUser = {};
+    const allTimeOrganizationIdsByUser = {};
+    const allTimeAccountEnterpriseIds = {};
+    for (const entry of cachedParsedData) {
+        const rawLogin = entry.user_login || 'unknown';
+        const canonicalUser = loginToCanonicalKey[rawLogin] || rawLogin;
+        const organizationId = entry.organization_id != null ? String(entry.organization_id) : null;
+        const enterpriseId = entry.enterprise_id != null ? String(entry.enterprise_id) : null;
+
+        const shouldFilterKnownUsers = organizationId && organizationId in orgFilterKnownUsersMap
+            ? orgFilterKnownUsersMap[organizationId]
+            : (enterpriseId && enterpriseId in enterpriseFilterKnownUsersMap
+                ? enterpriseFilterKnownUsersMap[enterpriseId]
+                : false);
+        if (shouldFilterKnownUsers && !Object.prototype.hasOwnProperty.call(loginToUser, rawLogin)) continue;
+
+        if (enterpriseId != null) {
+            (allTimeEnterpriseIdsByUser[canonicalUser] ??= new Set()).add(enterpriseId);
+            (allTimeAccountEnterpriseIds[rawLogin] ??= new Set()).add(enterpriseId);
+        }
+        if (organizationId != null) {
+            (allTimeOrganizationIdsByUser[canonicalUser] ??= new Set()).add(organizationId);
+        }
+    }
+
     for (const entry of cachedParsedData) {
         try {
             if (entry.day) {
@@ -831,8 +860,11 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
         const userAccounts = Array.isArray(mapping.accounts) ? mapping.accounts : [user.user_login];
         const userEmails = Array.isArray(mapping.emails) ? mapping.emails.filter(Boolean) : [];
 
-        const enterpriseIds = [...user.enterprise_ids];
-        const organizationIds = [...user.organization_ids];
+        // Merge with all-time membership so filtering reflects license allocation, not just
+        // activity within the selected period (e.g. a user active elsewhere this month but
+        // idle in enterprise X should still be counted as an enterprise X license holder).
+        const enterpriseIds = [...new Set([...user.enterprise_ids, ...(allTimeEnterpriseIdsByUser[user.user_login] || [])])].sort();
+        const organizationIds = [...new Set([...user.organization_ids, ...(allTimeOrganizationIdsByUser[user.user_login] || [])])].sort();
         const enterpriseLabel = enterpriseIds.map(id => enterpriseLabelMap[id] || id).join(', ');
         const organizationLabel = organizationIds.map(id => orgLabelMap[id] || id).join(', ');
 
@@ -1022,13 +1054,17 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                 Object.entries(user.accountCli).map(([login, c]) => [login, c.cli_version])
             ),
             account_enterprise_ids: Object.fromEntries(
-                Object.entries(user.accountEnterpriseIds).map(([login, set]) => [login, [...set].sort()])
+                [...new Set([...Object.keys(user.accountEnterpriseIds), ...userAccounts])].map(login => {
+                    const merged = new Set([...(user.accountEnterpriseIds[login] || []), ...(allTimeAccountEnterpriseIds[login] || [])]);
+                    return [login, [...merged].sort()];
+                }).filter(([, ids]) => ids.length)
             ),
             account_enterprise_labels: Object.fromEntries(
-                Object.entries(user.accountEnterpriseIds).map(([login, set]) => {
-                    const ids = [...set].sort();
+                [...new Set([...Object.keys(user.accountEnterpriseIds), ...userAccounts])].map(login => {
+                    const merged = new Set([...(user.accountEnterpriseIds[login] || []), ...(allTimeAccountEnterpriseIds[login] || [])]);
+                    const ids = [...merged].sort();
                     return [login, ids.map(id => enterpriseLabelMap[id] || id).join(', ')];
-                })
+                }).filter(([, label]) => label)
             ),
             accountCli: undefined
         };
@@ -1045,6 +1081,16 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
         if (activeLogins.has(canonicalKey)) continue;
         // Skip if any account for this user is active
         if (mapping.accounts.some(a => activeLogins.has(a))) continue;
+
+        // License allocation is derived from all-time telemetry (across every account), not the
+        // selected period, so an idle-this-month user still shows up under their enterprise.
+        const enterpriseIds = [...(allTimeEnterpriseIdsByUser[canonicalKey] || [])].sort();
+        const organizationIds = [...(allTimeOrganizationIdsByUser[canonicalKey] || [])].sort();
+        const accountEnterpriseIdsForUser = {};
+        for (const login of mapping.accounts) {
+            const ids = allTimeAccountEnterpriseIds[login];
+            if (ids && ids.size) accountEnterpriseIdsForUser[login] = [...ids].sort();
+        }
         allUsers.push({
             user_login: canonicalKey,
             human_name: mapping.name || canonicalKey,
@@ -1056,10 +1102,10 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             role: mapping.role || '',
             accounts: mapping.accounts,
             emails: Array.isArray(mapping.emails) ? mapping.emails.filter(Boolean) : [],
-            enterprise_ids: [],
-            organization_ids: [],
-            enterprise_label: '',
-            organization_label: '',
+            enterprise_ids: enterpriseIds,
+            organization_ids: organizationIds,
+            enterprise_label: enterpriseIds.map(id => enterpriseLabelMap[id] || id).join(', '),
+            organization_label: organizationIds.map(id => orgLabelMap[id] || id).join(', '),
             never_active: true,
             total_loc_changed: 0, total_loc_added: 0, total_loc_deleted: 0,
             total_suggested_changed: 0,
@@ -1076,8 +1122,10 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             ide_versions: {}, cli_version: null,
             all_doc_languages_list: [], daily: [],
             account_daily: {},
-            account_enterprise_ids: {},
-            account_enterprise_labels: {},
+            account_enterprise_ids: accountEnterpriseIdsForUser,
+            account_enterprise_labels: Object.fromEntries(
+                Object.entries(accountEnterpriseIdsForUser).map(([login, ids]) => [login, ids.map(id => enterpriseLabelMap[id] || id).join(', ')])
+            ),
             ai_credit_licenses: [],
             ai_credits_sort_value: 0,
             loc_by_model: {}, loc_by_language: {}, loc_by_code_language: {},
@@ -1105,9 +1153,10 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
         return a.title.localeCompare(b.title);
     });
 
-    // Collect enterprises and organizations seen in actual data, with nested hierarchy
-    const seenEnterpriseIds = [...new Set(results.flatMap(u => u.enterprise_ids))].sort();
-    const seenOrgIds = new Set(results.flatMap(u => u.organization_ids));
+    // Collect enterprises and organizations seen across all license holders (not just those active
+    // this period), so the dropdown doesn't hide an enterprise just because nobody used it recently.
+    const seenEnterpriseIds = [...new Set(allUsers.flatMap(u => u.enterprise_ids))].sort();
+    const seenOrgIds = new Set(allUsers.flatMap(u => u.organization_ids));
     const availableEnterprises = seenEnterpriseIds.map(id => {
         const eCfg = (config.enterprises || []).find(e => String(e.id) === id);
         const orgs = (eCfg?.organizations || [])
