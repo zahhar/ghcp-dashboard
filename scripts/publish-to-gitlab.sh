@@ -26,10 +26,7 @@ required_files=(
   "Dockerfile"
   ".dockerignore"
   "server.js"
-  "data/data.json"
-  "data/config.json"
-  "data/users.json"
-  "data/teams.json"
+  ".gitlab-ci.yml"
 )
 
 for file in "${required_files[@]}"; do
@@ -41,6 +38,10 @@ done
 
 if [[ ! -d "$SOURCE_ROOT/public" ]]; then
   echo "❌ Missing required directory: $SOURCE_ROOT/public"
+  exit 1
+fi
+if [[ ! -d "$SOURCE_ROOT/scripts" ]]; then
+  echo "❌ Missing required directory: $SOURCE_ROOT/scripts"
   exit 1
 fi
 
@@ -62,30 +63,45 @@ else
   git -C "$workdir" checkout --orphan "$TARGET_BRANCH"
 fi
 
-# Clean everything except .git metadata
-find "$workdir" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+# ── Determine whether data files are already on remote ────────────────────────
+# GitLab is the source of truth for data.  We only seed data files on the very
+# first publish (no FETCH_HEAD, i.e. the branch was just created as orphan).
+# On subsequent pushes data files already in GitLab are authoritative and must
+# NOT be overwritten with what is on the local machine.
+DATA_FILES_EXIST_ON_REMOTE=false
+if git -C "$workdir" rev-parse FETCH_HEAD >/dev/null 2>&1; then
+  DATA_FILES_EXIST_ON_REMOTE=true
+fi
 
-# Copy whitelist only
-mkdir -p "$workdir/public" "$workdir/data"
-cp "$SOURCE_ROOT/Dockerfile" "$workdir/"
-cp "$SOURCE_ROOT/.dockerignore" "$workdir/"
-cp "$SOURCE_ROOT/server.js" "$workdir/"
-cp -R "$SOURCE_ROOT/public/." "$workdir/public/"
-cp "$SOURCE_ROOT/data/config.json" "$workdir/data/"
-cp "$SOURCE_ROOT/data/users.json" "$workdir/data/"
-cp "$SOURCE_ROOT/data/teams.json" "$workdir/data/"
+# ── Clean app-code files (not data/) so stale code is removed ─────────────────
+find "$workdir" -mindepth 1 -maxdepth 1 \
+  ! -name .git ! -name data \
+  -exec rm -rf {} +
 
-# data.json is filtered per-enterprise (filter_to_known_users) for the deploy bundle only;
-# the source data/data.json is never touched.
-echo "🔎 Filtering data.json for deployment (filter_to_known_users)…"
-node "$SOURCE_ROOT/scripts/filter-deploy-data.js" "$SOURCE_ROOT" "$workdir/data/data.json"
-
-mkdir -p "$workdir/k8s"
+# ── Copy app code (always) ────────────────────────────────────────────────────
+mkdir -p "$workdir/public" "$workdir/scripts" "$workdir/k8s" "$workdir/data"
+cp "$SOURCE_ROOT/Dockerfile"      "$workdir/"
+cp "$SOURCE_ROOT/.dockerignore"   "$workdir/"
+cp "$SOURCE_ROOT/.gitlab-ci.yml"  "$workdir/"
+cp "$SOURCE_ROOT/server.js"       "$workdir/"
+cp "$SOURCE_ROOT/package.json"    "$workdir/"
+cp -R "$SOURCE_ROOT/public/."     "$workdir/public/"
+cp -R "$SOURCE_ROOT/scripts/."    "$workdir/scripts/"
 cp "$SOURCE_ROOT/k8s/deployment.yaml" "$workdir/k8s/"
 
-# Optionally include GitLab pipeline file if present.
-if [[ -f "$SOURCE_ROOT/.gitlab-ci.yml" ]]; then
-  cp "$SOURCE_ROOT/.gitlab-ci.yml" "$workdir/"
+# ── Seed data files only when the remote had no data yet ──────────────────────
+if [[ "$DATA_FILES_EXIST_ON_REMOTE" == "false" ]]; then
+  echo "🌱 First publish — seeding data files from local checkout …"
+  cp "$SOURCE_ROOT/data/config.json" "$workdir/data/"
+  cp "$SOURCE_ROOT/data/users.json"  "$workdir/data/"
+  cp "$SOURCE_ROOT/data/teams.json"  "$workdir/data/"
+  cp "$SOURCE_ROOT/data/data.json"   "$workdir/data/"
+  # Create inbox directory for incoming NDJSON files
+  mkdir -p "$workdir/data/raw/inbox" "$workdir/data/raw/processed"
+  touch "$workdir/data/raw/inbox/.gitkeep"
+  touch "$workdir/data/raw/processed/.gitkeep"
+else
+  echo "📂 Remote data files are authoritative — skipping local data copy."
 fi
 
 # Defensive: ensure secrets are never present in deploy repo.

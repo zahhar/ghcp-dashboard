@@ -43,7 +43,6 @@ if (process.env.USE_MOCK_DATA === 'true') {
 // ── Paths ───────────────────────────────────────────────────────────────
 const DATA_FILE   = path.join(ROOT_DIR, 'data', 'data.json');
 const INBOX_DIR   = path.join(ROOT_DIR, 'data', 'raw', 'inbox');
-const DONE_DIR    = path.join(ROOT_DIR, 'data', 'raw', 'processed');
 
 // ── Helpers (mirrors update-data.js conventions) ────────────────────────
 function getRecordKey(rec) {
@@ -99,9 +98,7 @@ function prepareMissingLines(candidateLines, existingKeys, label) {
 
 // ── Main ────────────────────────────────────────────────────────────────
 function main() {
-    // Ensure directories exist
     fs.mkdirSync(INBOX_DIR, { recursive: true });
-    fs.mkdirSync(DONE_DIR,  { recursive: true });
 
     // Collect *.json files from inbox
     const files = fs.readdirSync(INBOX_DIR)
@@ -126,7 +123,6 @@ function main() {
 
     for (const filename of files) {
         const srcPath  = path.join(INBOX_DIR, filename);
-        const destPath = path.join(DONE_DIR,  filename);
 
         console.log(`\n📄 Processing: ${filename}`);
 
@@ -147,20 +143,8 @@ function main() {
 
         console.log(`   ✅ Imported: ${missing.length} new record(s), ${duplicates} duplicate(s) skipped`);
 
-        // Resolve name conflict in processed/ by appending a counter suffix
-        let finalDest = destPath;
-        if (fs.existsSync(finalDest)) {
-            const ext  = path.extname(filename);
-            const base = path.basename(filename, ext);
-            let counter = 1;
-            while (fs.existsSync(finalDest)) {
-                finalDest = path.join(DONE_DIR, `${base}_${counter}${ext}`);
-                counter++;
-            }
-        }
-
-        fs.renameSync(srcPath, finalDest);
-        console.log(`   📦 Moved to: data/raw/processed/${path.basename(finalDest)}`);
+        fs.unlinkSync(srcPath);
+        console.log(`   🗑️  Deleted: ${filename}`);
     }
 
     console.log(`\n🎉 Ingest complete: +${totalNew} new record(s) added, ${totalDupes} duplicate(s) skipped across ${files.length} file(s).`);

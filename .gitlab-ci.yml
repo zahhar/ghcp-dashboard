@@ -1,46 +1,102 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# ghcp-stats deploy pipeline
+# ghcp-stats pipeline
 #
 # Stages:
+#   ingest — triggered by inbox file push: ingest NDJSON → update data.json
+#             → commit back to repo → proceed to build
+#   update — triggered manually or on schedule: pull GitHub API → update
+#             data.json and config.json → commit back → proceed to build
 #   build  — Kaniko builds the Docker image and pushes it to GitLab registry
 #   deploy — kubectl updates the running Deployment on the GKE cluster
 #
 # GitLab built-in variables used (no manual setup needed):
-#   CI_REGISTRY              — GitLab container registry hostname
-#   CI_REGISTRY_USER         — Registry user (auto-injected per-job)
-#   CI_REGISTRY_PASSWORD     — Registry token (auto-injected per-job)
-#   CI_REGISTRY_IMAGE        — Full image path for this project (always lowercase)
-#   CI_COMMIT_SHA            — Full commit SHA, used to tag the image
+#   CI_REGISTRY, CI_REGISTRY_USER, CI_REGISTRY_PASSWORD, CI_REGISTRY_IMAGE,
+#   CI_COMMIT_SHA, CI_PROJECT_ID, CI_DEFAULT_BRANCH, CI_SERVER_HOST,
+#   GITLAB_USER_LOGIN, CI_JOB_TOKEN
 #
 # Variables you must set in GitLab → Settings → CI/CD → Variables:
-#   K8S_NAMESPACE        — Kubernetes namespace where your pod runs  (e.g. ghcp)
-#   K8S_DEPLOYMENT_NAME  — Name of the Kubernetes Deployment         (e.g. ghcp-stats)
-#   K8S_CONTAINER_NAME   — Container name inside the pod spec        (e.g. ghcp-stats)
+#   K8S_NAMESPACE              — Kubernetes namespace (e.g. scor-gits-prod)
+#   K8S_DEPLOYMENT_NAME        — Deployment name     (e.g. ghcp-stats)
+#   K8S_CONTAINER_NAME         — Container name      (e.g. ghcp-stats)
+#   GITHUB_ENTERPRISE_TOKEN    — GitHub PAT for update-data.js API calls
+#   DATA_PUSH_TOKEN            — GitLab Project Access Token with read_repository
+#                                + write_repository scope (for committing data back)
 # ──────────────────────────────────────────────────────────────────────────────
 
 stages:
+  - refresh
   - build
   - deploy
 
 variables:
   KANIKO_IMAGE: "gcr.io/kaniko-project/executor:debug"
-  # Canonical image references — CI_REGISTRY_IMAGE is already lowercase
   IMAGE_SHA: "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
   IMAGE_LATEST: "$CI_REGISTRY_IMAGE:latest"
   RUNNER_TAG_PROD: shelter-scor-gits-prod
+  NODE_IMAGE: "node:20-alpine"
+  GIT_AUTHOR_NAME: "gitlab-data-bot"
+  GIT_AUTHOR_EMAIL: "gitlab-data-bot@local"
 
 .runner_prod:
   tags:
     - $RUNNER_TAG_PROD
 
-# ── Stage 1: build ────────────────────────────────────────────────────────────
+# ── Shared helper: git-commit-back ────────────────────────────────────────────
+# Commits any changes to data/ back to the repository.  Jobs that need this
+# extend it.  DATA_PUSH_TOKEN must be set.  The commit uses [skip ci] so it
+# does not trigger another full pipeline run.
+.commit_data_back: &commit_data_back |
+  git config user.name  "$GIT_AUTHOR_NAME"
+  git config user.email "$GIT_AUTHOR_EMAIL"
+  git remote set-url origin "https://oauth2:${DATA_PUSH_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
+  git add data/data.json data/config.json data/users.json data/teams.json \
+          data/raw/inbox/ 2>/dev/null || true
+  if ! git diff --cached --quiet; then
+    git commit -m "data: automated update [skip ci]"
+    git push origin HEAD:$CI_DEFAULT_BRANCH
+  else
+    echo "No data changes to commit."
+  fi
+
+# ── Stage 1: refresh ─────────────────────────────────────────────────────────
+# Runs on: schedule (daily), manual trigger, or push with new inbox files.
+# Order: GitHub API pull first, then inbox ingest (so API data lands first and
+# inbox files can override/supplement it).  Commits everything back with [skip ci]
+# so it does not re-trigger this stage, but does trigger build+deploy.
+refresh:
+  stage: refresh
+  extends: .runner_prod
+  image: $NODE_IMAGE
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_PIPELINE_SOURCE == "web"'          # manual "Run pipeline" in GitLab UI
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+      changes:
+        - data/raw/inbox/*.json
+  before_script:
+    - apk add --no-cache git
+  script:
+    - node scripts/update-data.js
+    - node scripts/find-new-users.js || true   # advisory — never blocks pipeline
+    - node scripts/ingest-data.js              # no-op if inbox is empty
+    - *commit_data_back
+  artifacts:
+    paths:
+      - data/data.json
+      - data/config.json
+    expire_in: 1 hour
+
+# ── Stage 2: build ────────────────────────────────────────────────────────────
+# Builds the Docker image with the latest data files.  Runs after refresh
+# (which commits back with [skip ci]), or on any direct push to default branch.
 build-image:
   stage: build
   extends: .runner_prod
   image: $KANIKO_IMAGE
   resource_group: build-image
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
   before_script:
-    # Authenticate Kaniko with GitLab container registry
     - mkdir -p /kaniko/.docker
     - |
       echo "{\"auths\":{\"$CI_REGISTRY\":{\"auth\":\"$(echo -n "$CI_REGISTRY_USER:$CI_REGISTRY_PASSWORD" | base64 -w0)\"}}}" \
@@ -62,16 +118,17 @@ build-image:
       - runner_system_failure
       - stuck_or_timeout_failure
 
-# ── Stage 2: deploy ───────────────────────────────────────────────────────────
+# ── Stage 3: deploy ───────────────────────────────────────────────────────────
 deploy:
   stage: deploy
   extends: .runner_prod
-  # Lightweight kubectl image; runner is in-cluster so no kubeconfig setup needed
   image: bitnami/kubectl:latest
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
   script:
-    - test -n "$K8S_NAMESPACE" || (echo "K8S_NAMESPACE is required" && exit 1)
-    - test -n "$K8S_DEPLOYMENT_NAME" || (echo "K8S_DEPLOYMENT_NAME is required" && exit 1)
-    - test -n "$K8S_CONTAINER_NAME" || (echo "K8S_CONTAINER_NAME is required" && exit 1)
+    - test -n "$K8S_NAMESPACE"        || (echo "K8S_NAMESPACE is required"        && exit 1)
+    - test -n "$K8S_DEPLOYMENT_NAME"  || (echo "K8S_DEPLOYMENT_NAME is required"  && exit 1)
+    - test -n "$K8S_CONTAINER_NAME"   || (echo "K8S_CONTAINER_NAME is required"   && exit 1)
     - echo "Deploying $IMAGE_SHA to namespace $K8S_NAMESPACE ..."
     - kubectl set image deployment/$K8S_DEPLOYMENT_NAME
         $K8S_CONTAINER_NAME=$IMAGE_SHA
