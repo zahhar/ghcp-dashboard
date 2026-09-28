@@ -108,8 +108,8 @@
                             <thead>
                                 <tr>
                                     <th>User</th>
-                                    <th title="Grand total = suggested + applied LOC&#10;💡 Suggested LOC = loc_suggested_to_add + loc_suggested_to_delete&#10;✏️ Applied LOC = loc_added + loc_deleted">Output</th>
-                                    <th>Steering</th>
+                                    <th title="Grand total = suggested + applied LOC&#10;💡 Suggested LOC = loc_suggested_to_add + loc_suggested_to_delete&#10;✏️ Applied LOC = loc_added + loc_deleted&#10;🔤 Output tokens across CLI and Copilot App">Output</th>
+                                    <th title="Steering Output = Steering Suggested + Steering Applied&#10;💡 Suggested LOC for documentation/prompt languages&#10;✏️ Applied LOC for documentation/prompt languages&#10;🔡 Input tokens across CLI and Copilot App">Steering</th>
                                     <th>Coding</th>
                                     <th title="Total interaction turns&#10;🏃 Output LOC per turn (suggested + applied)&#10;🎯 Acceptance Rate: accepted / generated">Turns</th>
                                     <th>Perf</th>
@@ -183,6 +183,13 @@
                     </div>
                     <div class="donut-grid" style="margin-top:1.25rem">
                         <div id="donut-streak"></div>
+                    </div>
+                    <div class="donut-grid" style="margin-top:1.25rem">
+                        <div id="donut-mcp"></div>
+                        <div id="donut-plugin"></div>
+                        <div id="donut-skill"></div>
+                        <div id="donut-slash-cmd"></div>
+                        <div id="donut-custom-agent"></div>
                     </div>
                 </div>
             </section>

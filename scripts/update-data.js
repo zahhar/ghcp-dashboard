@@ -253,15 +253,18 @@ function reconcileLines(candidateLines, store, label) {
             continue;
         }
 
-        const changedFields = getChangedFields(existing.rec, rec);
+        // Enterprise- and organization-scoped reports expose different schema generations for the
+        // same user+day, so merge per field: an omitted key must never erase data already stored.
+        const merged = { ...existing.rec, ...rec };
+        const changedFields = getChangedFields(existing.rec, merged);
         if (changedFields.length === 0) {
             result.unchanged++;
             continue;
         }
 
-        store.recordsByKey.set(key, { line, rec });
+        store.recordsByKey.set(key, { line: JSON.stringify(merged), rec: merged });
         result.updated++;
-        console.log(`  🔄 Replaced changed record ${key} (${rec.day}); fields: ${changedFields.join(', ')}`);
+        console.log(`  🔄 Merged changed record ${key} (${merged.day}); fields: ${changedFields.join(', ')}`);
     }
 
     return result;

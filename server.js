@@ -165,6 +165,16 @@ const TEAMS_FILE = path.join(DATA_ROOT, 'teams.json');
 
 let cachedParsedData = null;
 
+// Folds one of the totals_by_{mcp,plugin,skill,slash_cmd} arrays into a { name: interactions } map.
+function addInteractionCounts(rows, nameField, target) {
+    if (!Array.isArray(rows)) return;
+    for (const row of rows) {
+        const name = row[nameField];
+        const count = row.interaction_count || 0;
+        if (name && count > 0) target[name] = (target[name] || 0) + count;
+    }
+}
+
 // Process data on the fly
 // dayLimit: if set, only include days of the month whose day-of-month number is <= dayLimit
 async function getAggregatedData(monthFilter = null, dayLimit = null) {
@@ -351,7 +361,9 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                 continue;
             }
 
-            const licenseScope = organizationId ? `o:${organizationId}` : `e:${enterpriseId || 'unknown'}`;
+            // Licences are billed per enterprise. organization_id disappeared from the API after
+            // 2026-04, so scoping by it would split one licence into two streams mid-history.
+            const licenseScope = `e:${enterpriseId || 'unknown'}`;
             if (entry.day) {
                 const scopeMonthKey = `${licenseScope}|${entry.day.slice(0, 7)}`;
                 if (!reportThroughDayByScopeMonth[scopeMonthKey] || entry.day > reportThroughDayByScopeMonth[scopeMonthKey]) {
@@ -411,14 +423,19 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                     modelFeatures_events: {},      // { [model]: { [feature]: event_count } } — pure events
                     ideVersions: {},  // { [ide_name]: { last_seen_day, ide_version, plugin, plugin_version } }
                     cli_version_info: null,  // { last_seen_day, cli_version }
-                    cli_output_tokens_sum: 0,
+                    output_tokens_sum: 0,
+                    input_tokens_sum: 0,
+                    mcpInteractions: {},       // { [mcp]: interaction_count }
+                    pluginInteractions: {},    // { [plugin]: interaction_count }
+                    skillInteractions: {},     // { [skill]: interaction_count }
+                    slashCmdInteractions: {},  // { [slash_cmd]: interaction_count }
+                    customAgentInteractions: {},  // { [custom_agent]: interaction_count }
                 };
             }
 
             const stats = userStats[user];
-            // A license stream is scoped to the actual account and organization. Enterprise is
-            // the fallback when organization_id is unavailable. This intentionally keeps two
-            // licenses owned by the same canonical user separate.
+            // A licence stream is scoped to the actual account and its enterprise. This
+            // intentionally keeps two licences owned by the same canonical user separate.
             const licenseKey = `${rawLogin}|${licenseScope}`;
             if (!stats.licenseDaily[licenseKey]) {
                 stats.licenseDaily[licenseKey] = {
@@ -429,12 +446,25 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                 };
             }
             const license = stats.licenseDaily[licenseKey];
+            if (organizationId && !license.organization_id) license.organization_id = organizationId;
             if (entry.day && !license.daily[entry.day]) {
                 license.daily[entry.day] = { user_initiated: 0, code_generation: 0, code_loc: 0, doc_loc: 0, cli_turns: 0, ai_credits_used: 0 };
             }
             const licenseDay = entry.day ? license.daily[entry.day] : null;
 
-            stats.user_initiated_interaction_count += (entry.user_initiated_interaction_count || 0);
+            // Per-surface interaction counts; the row-level total is exactly the sum of these.
+            const featureUi = {};
+            for (const tf of (entry.totals_by_feature || [])) {
+                featureUi[tf.feature] = (featureUi[tf.feature] || 0) + (tf.user_initiated_interaction_count || 0);
+            }
+            // VS Code background-agent messages are not always folded into the row-level total,
+            // which otherwise hides a whole day of work for agent-only users.
+            const unreportedVscodeAgentMsgs = Math.max(
+                0,
+                (entry.totals_by_vscode_agent?.total_user_messages || 0) - (featureUi['vscode_agent'] || 0)
+            );
+
+            stats.user_initiated_interaction_count += (entry.user_initiated_interaction_count || 0) + unreportedVscodeAgentMsgs;
             if (entry.enterprise_id != null) stats.enterprise_ids.add(String(entry.enterprise_id));
             if (entry.organization_id != null) stats.organization_ids.add(String(entry.organization_id));
             if (entry.enterprise_id != null) {
@@ -444,7 +474,16 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             stats.code_generation_activity_count += (entry.code_generation_activity_count || 0);
             stats.code_acceptance_activity_count += (entry.code_acceptance_activity_count || 0);
             stats.cli_request_count += (entry.totals_by_cli?.request_count || 0);
-            stats.cli_output_tokens_sum += (entry.totals_by_cli?.token_usage?.output_tokens_sum || 0);
+            // CLI and Copilot App are the only surfaces that report token usage.
+            stats.output_tokens_sum += (entry.totals_by_cli?.token_usage?.output_tokens_sum || 0)
+                + (entry.totals_by_copilot_app?.token_usage?.output_tokens_sum || 0);
+            stats.input_tokens_sum += (entry.totals_by_cli?.token_usage?.prompt_tokens_sum || 0)
+                + (entry.totals_by_copilot_app?.token_usage?.prompt_tokens_sum || 0);
+            addInteractionCounts(entry.totals_by_mcp, 'mcp', stats.mcpInteractions);
+            addInteractionCounts(entry.totals_by_plugin, 'plugin', stats.pluginInteractions);
+            addInteractionCounts(entry.totals_by_skill, 'skill', stats.skillInteractions);
+            addInteractionCounts(entry.totals_by_slash_cmd, 'slash_cmd', stats.slashCmdInteractions);
+            addInteractionCounts(entry.totals_by_custom_agent, 'custom_agent', stats.customAgentInteractions);
             if (entry.day && entry.totals_by_cli?.last_known_cli_version?.cli_version) {
                 const cv = entry.totals_by_cli.last_known_cli_version.cli_version;
                 if (!stats.cli_version_info || entry.day >= stats.cli_version_info.last_seen_day) {
@@ -457,10 +496,11 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             }
 
             if (entry.day) {
-                // CLI prompt_count is included in user_initiated_interaction_count by the GitHub API.
-                // Subtract it so the daily "Chat asks" segment only reflects genuine chat/agent turns.
-                const entryCliPrompts = entry.totals_by_cli?.prompt_count || 0;
-                const entryChatInitiated = Math.max(0, (entry.user_initiated_interaction_count || 0) - entryCliPrompts);
+                // CLI turns are included in user_initiated_interaction_count by the GitHub API.
+                // Subtract the CLI slice of the per-feature breakdown — totals_by_cli.prompt_count
+                // disagrees with it on some rows and would over-subtract from the Chat segment.
+                const entryChatInitiated = Math.max(0, (entry.user_initiated_interaction_count || 0) - (featureUi['copilot_cli'] || 0))
+                    + unreportedVscodeAgentMsgs;
                 // The green CLI chart segment is intentionally based only on request_count.
                 // prompt_count can be zero even when CLI requests were made.
                 const entryCliRequests = Number(entry.totals_by_cli?.request_count) || 0;
@@ -890,9 +930,7 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             const latestMonth = months.at(-1) || null;
             const latestMonthDays = latestMonth ? daily.filter(d => d.day.startsWith(latestMonth)) : [];
             const latestMonthUsed = latestMonthDays.reduce((sum, d) => sum + d.ai_credits_used, 0);
-            const licenseScope = license.organization_id
-                ? `o:${license.organization_id}`
-                : `e:${license.enterprise_id || 'unknown'}`;
+            const licenseScope = `e:${license.enterprise_id || 'unknown'}`;
             const reportThroughDay = latestMonth
                 ? reportThroughDayByScopeMonth[`${licenseScope}|${latestMonth}`] || null
                 : null;
@@ -961,7 +999,8 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             cli_days_count: user.cli_days.size,
             code_review_days_count: user.code_review_days.size,
             cloud_agent_days_count: user.cloud_agent_days.size,
-            cli_output_tokens_sum: user.cli_output_tokens_sum,
+            output_tokens_sum: user.output_tokens_sum,
+            input_tokens_sum: user.input_tokens_sum,
             ai_adoption_phase_number: user.ai_adoption_phase_number,
             turns: user.user_initiated_interaction_count + user.cli_request_count,
             acceptance_rate: Math.round(generationRatio * 100) + '%',
@@ -1020,6 +1059,11 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             loc_by_model_feature_strict: user.modelFeatures_loc_strict,
             events_by_model_feature: user.modelFeatures_events,
             loc_by_ide: user.ides,
+            interactions_by_mcp: user.mcpInteractions,
+            interactions_by_plugin: user.pluginInteractions,
+            interactions_by_skill: user.skillInteractions,
+            interactions_by_slash_cmd: user.slashCmdInteractions,
+            interactions_by_custom_agent: user.customAgentInteractions,
             models: undefined,
             ides: undefined,
             languages: undefined,
@@ -1035,6 +1079,11 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             modelFeatures_events: undefined,
             ideVersions: undefined,
             cli_version_info: undefined,
+            mcpInteractions: undefined,
+            pluginInteractions: undefined,
+            skillInteractions: undefined,
+            slashCmdInteractions: undefined,
+            customAgentInteractions: undefined,
             accountDaily: undefined,
             licenseDaily: undefined,
             account_ides: Object.fromEntries(
@@ -1113,7 +1162,7 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             doc_loc_suggested: 0, doc_loc_applied: 0,
             code_loc_changed: 0, code_loc_added: 0, code_loc_deleted: 0,
             code_loc_suggested: 0, code_loc_applied: 0,
-            active_days_count: 0, agent_days_count: 0, chat_days_count: 0, cli_days_count: 0, code_review_days_count: 0, cloud_agent_days_count: 0, cli_output_tokens_sum: 0, ai_adoption_phase_number: null,
+            active_days_count: 0, agent_days_count: 0, chat_days_count: 0, cli_days_count: 0, code_review_days_count: 0, cloud_agent_days_count: 0, output_tokens_sum: 0, input_tokens_sum: 0, ai_adoption_phase_number: null,
             turns: 0, acceptance_rate: '0%',
             avg_loc_added_daily: 0, perf_score: 0,
             favorite_model: '-', favorite_ide: '-', favorite_language: '-',
@@ -1130,6 +1179,7 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             ai_credits_sort_value: 0,
             loc_by_model: {}, loc_by_language: {}, loc_by_code_language: {},
             loc_by_doc_language: {}, loc_by_feature: {}, loc_by_ide: {},
+            interactions_by_mcp: {}, interactions_by_plugin: {}, interactions_by_skill: {}, interactions_by_slash_cmd: {}, interactions_by_custom_agent: {},
         });
     }
 
