@@ -102,7 +102,7 @@ function main() {
 
     // Collect *.json files from inbox
     const files = fs.readdirSync(INBOX_DIR)
-        .filter(f => f.toLowerCase().endsWith('.json'))
+        .filter(f => /\.jsonl?$/i.test(f))
         .sort();
 
     if (files.length === 0) {

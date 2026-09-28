@@ -80,11 +80,12 @@ find "$workdir" -mindepth 1 -maxdepth 1 \
 
 # ── Copy app code (always) ────────────────────────────────────────────────────
 mkdir -p "$workdir/public" "$workdir/scripts" "$workdir/k8s" "$workdir/data"
-cp "$SOURCE_ROOT/Dockerfile"      "$workdir/"
-cp "$SOURCE_ROOT/.dockerignore"   "$workdir/"
-cp "$SOURCE_ROOT/.gitlab-ci.yml"  "$workdir/"
-cp "$SOURCE_ROOT/server.js"       "$workdir/"
-cp "$SOURCE_ROOT/package.json"    "$workdir/"
+cp "$SOURCE_ROOT/Dockerfile"         "$workdir/"
+cp "$SOURCE_ROOT/.dockerignore"      "$workdir/"
+cp "$SOURCE_ROOT/.gitlab-ci.yml"     "$workdir/"
+cp "$SOURCE_ROOT/server.js"          "$workdir/"
+cp "$SOURCE_ROOT/package.json"       "$workdir/"
+cp "$SOURCE_ROOT/README.gitlab.md"   "$workdir/README.md"
 cp -R "$SOURCE_ROOT/public/."     "$workdir/public/"
 cp -R "$SOURCE_ROOT/scripts/."    "$workdir/scripts/"
 cp "$SOURCE_ROOT/k8s/deployment.yaml" "$workdir/k8s/"

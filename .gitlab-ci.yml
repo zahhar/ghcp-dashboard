@@ -73,6 +73,7 @@ refresh:
     - if: '$CI_PIPELINE_SOURCE == "push"'
       changes:
         - data/raw/inbox/*.json
+        - data/raw/inbox/*.jsonl
   before_script:
     - apk add --no-cache git
   script:
@@ -136,6 +137,4 @@ deploy:
     - kubectl rollout status deployment/$K8S_DEPLOYMENT_NAME
         --namespace=$K8S_NAMESPACE
         --timeout=120s
-  only:
-    - main
 

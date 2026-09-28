@@ -622,6 +622,17 @@ async function fetchDashboardData(month = '') {
                 opt.textContent = d.toLocaleString('default', { month: 'long', year: 'numeric' });
                 monthFilterEl.appendChild(opt);
             });
+
+            // If the auto-selected current month has no data, fall back to the latest available month
+            if (currentMonthFilter && !data.availableMonths.includes(currentMonthFilter)) {
+                const latest = data.availableMonths[data.availableMonths.length - 1];
+                if (latest) {
+                    currentMonthFilter = latest;
+                    updateUrlFromCurrentState();
+                    fetchDashboardData(currentMonthFilter);
+                    return;
+                }
+            }
         }
 
         // Populate team dropdown if present in response and not populated yet
