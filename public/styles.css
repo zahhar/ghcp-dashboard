@@ -1059,13 +1059,13 @@ a.coding-efficiency-name:focus-visible {
     outline-offset: -1px;
 }
 
-/* Coding-only LOC changed: paired added/deleted bars for each day or week. */
-.lines-changed-chart-shell {
+/* Total AI output volume: one bar per day or week. */
+.ai-output-chart-shell {
     display: flex;
     align-items: flex-start;
 }
 
-.lines-changed-y-axis {
+.ai-output-y-axis {
     width: 3.25rem;
     flex-shrink: 0;
     display: flex;
@@ -1078,32 +1078,32 @@ a.coding-efficiency-name:focus-visible {
     text-align: right;
 }
 
-.lines-changed-plot {
+.ai-output-plot {
     flex: 1;
     min-width: 0;
 }
 
-.lines-changed-chart {
+.ai-output-chart {
     position: relative;
     display: flex;
     align-items: flex-end;
     gap: 1px;
 }
 
-.lines-changed-grid {
+.ai-output-grid {
     position: absolute;
     inset: 0;
     pointer-events: none;
 }
 
-.lines-changed-grid-line {
+.ai-output-grid-line {
     position: absolute;
     left: 0;
     right: 0;
     border-top: 1px solid rgba(148, 163, 184, 0.2);
 }
 
-.lines-changed-x-axis {
+.ai-output-x-axis {
     display: flex;
     gap: 1px;
     margin-top: 0.35rem;
@@ -1112,50 +1112,137 @@ a.coding-efficiency-name:focus-visible {
     line-height: 1;
 }
 
-.lines-changed-x-axis span {
+.ai-output-x-axis span {
     flex: 1 1 0;
     min-width: 0;
     text-align: center;
     white-space: nowrap;
 }
 
-.lines-changed-day-of-week {
+.ai-output-day-of-week {
     display: block;
     margin-top: 0.1rem;
 }
 
-.lines-changed-weekend {
+.ai-output-weekend {
     color: rgba(239, 68, 68, 0.65);
 }
 
-.lines-changed-period {
+.ai-output-period {
     flex: 1 1 0;
     min-width: 0;
     height: 100%;
     display: flex;
     align-items: flex-end;
     justify-content: center;
-    gap: 1px;
     cursor: help;
     z-index: 1;
 }
 
-.lines-changed-bar {
-    width: 38%;
+.ai-output-bar {
+    width: 70%;
     min-width: 1px;
-    border-radius: 1px 1px 0 0;
+    border-radius: 2px 2px 0 0;
+    background: #818cf8;
 }
 
-.lines-changed-added {
-    background: #34d399;
+.ai-output-note {
+    margin: 0.6rem 0 0 3.25rem;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    line-height: 1.5;
 }
 
-.lines-changed-deleted {
-    background: #fb7185;
+.model-credits-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
 }
 
-.lines-changed-legend {
-    margin-left: 3.25rem;
+.model-credits-table th {
+    text-align: left;
+    padding: 0.4rem 0.6rem;
+    color: var(--text-muted);
+    font-weight: 600;
+    white-space: nowrap;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.25);
+    cursor: help;
+}
+
+.model-credits-table th.model-credits-num {
+    text-align: right;
+}
+
+.model-credits-table td {
+    padding: 0.35rem 0.6rem;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.model-credits-table tbody tr:hover {
+    background: rgba(148, 163, 184, 0.08);
+}
+
+.model-credits-thin {
+    opacity: 0.45;
+}
+
+.model-credits-name {
+    white-space: nowrap;
+    color: var(--text-main);
+}
+
+.model-credits-num {
+    text-align: right;
+    white-space: nowrap;
+}
+
+.model-credits-muted {
+    color: var(--text-muted);
+}
+
+.model-credits-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 0.45rem;
+    background: #64748b;
+}
+
+.model-credits-dot-expensive {
+    background: #f87171;
+}
+
+.model-credits-dot-weak {
+    background: #fbbf24;
+}
+
+.model-credits-rate {
+    position: relative;
+    min-width: 8rem;
+}
+
+.model-credits-bar {
+    position: absolute;
+    left: 0.6rem;
+    top: 50%;
+    transform: translateY(-50%);
+    height: 14px;
+    border-radius: 2px;
+    background: rgba(129, 140, 248, 0.35);
+}
+
+.model-credits-rate-value {
+    position: relative;
+    padding-left: 0.15rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.model-credits-note {
+    margin-top: 0.6rem;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    line-height: 1.5;
 }
 
 @media (max-width: 700px) {
@@ -1174,20 +1261,20 @@ a.coding-efficiency-name:focus-visible {
         text-align: right;
     }
 
-    .lines-changed-y-axis {
+    .ai-output-y-axis {
         width: 2.6rem;
         font-size: 0.58rem;
     }
 
-    .lines-changed-x-axis {
+    .ai-output-x-axis {
         font-size: 0.52rem;
     }
 
-    .lines-changed-x-axis span:nth-child(odd) {
+    .ai-output-x-axis span:nth-child(odd) {
         visibility: hidden;
     }
 
-    .lines-changed-legend {
+    .ai-output-note {
         margin-left: 2.6rem;
     }
 }

@@ -76,7 +76,7 @@ const WAU_PERCENT_CHART_HEIGHT = 150;
 const DAU_CHART_HEIGHT = 120;
 
 // Pixel height of the coding LOC added/deleted paired-bar chart.
-const LINES_CHANGED_CHART_HEIGHT = 180;
+const AI_OUTPUT_CHART_HEIGHT = 180;
 
 // Pixel height of the bar drawing area in the per-user detail (combined turns/LOC) chart
 const USER_CHART_HEIGHT = 170;
@@ -1040,7 +1040,8 @@ function renderUsersTable() {
     renderDonutSection(sortedUsers);
     renderMaturitySection(sortedUsers);
     renderCodingEfficiencyChart(sortedUsers);
-    renderLinesChangedChart(sortedUsers);
+    renderAiOutputChart(sortedUsers);
+    renderModelCreditsTable(sortedUsers);
 
     sortedUsers.forEach((user, idx) => {
         const tr = document.createElement('tr');
@@ -1387,16 +1388,20 @@ function openUserModal(user) {
         chartHTML = buildLicenseCharts(onlyLogin, user.daily || [], warning);
     }
 
-    const linesChangedChart = buildLinesChangedChart(
-        computeCodingLineChanges([user], currentMonthFilter),
+    const aiOutputChart = buildAiOutputChart(
+        computeAiOutputVolume([user], currentMonthFilter),
         currentMonthFilter,
         { dynamicScale: true }
     );
     document.getElementById('modal-body').innerHTML = chartHTML
         + buildUserMetaSection(user, { showIdes: showIdesInMeta })
-        + `<div class="user-meta-section user-lines-changed-section">
-            <div class="chart-section-title">Lines changed by AI</div>
-            ${linesChangedChart}
+        + `<div class="user-meta-section user-ai-output-section">
+            <div class="chart-section-title">AI Output Volume</div>
+            ${aiOutputChart}
+        </div>`
+        + `<div class="user-meta-section">
+            <div class="chart-section-title">AI credits by model</div>
+            ${buildModelCreditsTable(user.model_credit_stats || {})}
         </div>`;
     overlay.style.display = 'flex';
 
@@ -1671,7 +1676,8 @@ function initSectionToggle(toggleId, collapsibleId, chevronId) {
 initSectionToggle('users-toggle',          'users-table-collapsible',    'users-chevron');
 initSectionToggle('maturity-toggle',       'maturity-collapsible',       'maturity-chevron');
 initSectionToggle('coding-efficiency-toggle', 'coding-efficiency-collapsible', 'coding-efficiency-chevron');
-initSectionToggle('lines-changed-toggle',  'lines-changed-collapsible',  'lines-changed-chevron');
+initSectionToggle('ai-output-toggle',       'ai-output-collapsible',      'ai-output-chevron');
+initSectionToggle('model-credits-toggle',  'model-credits-collapsible',  'model-credits-chevron');
 initSectionToggle('breakdown-toggle',      'breakdown-collapsible',      'breakdown-chevron');
 initSectionToggle('watched-models-toggle', 'watched-models-collapsible', 'watched-models-chevron');
 
@@ -1953,15 +1959,14 @@ function renderCodingEfficiencyChart(users) {
     bindCodingEfficiencyInteractions(container);
 }
 
-function computeCodingLineChanges(users, month = '') {
-    const codingLocByDay = new Map();
+// Total AI output = suggested + applied LOC across both coding and steering languages.
+function computeAiOutputVolume(users, month = '') {
+    const outputByDay = new Map();
     for (const user of users) {
         for (const daily of user.daily || []) {
             if (!daily.day) continue;
-            const current = codingLocByDay.get(daily.day) || { added: 0, deleted: 0 };
-            current.added += Number(daily.code_loc_added) || 0;
-            current.deleted += Number(daily.code_loc_deleted) || 0;
-            codingLocByDay.set(daily.day, current);
+            const output = (Number(daily.code_loc) || 0) + (Number(daily.doc_loc) || 0);
+            outputByDay.set(daily.day, (outputByDay.get(daily.day) || 0) + output);
         }
     }
 
@@ -1970,25 +1975,22 @@ function computeCodingLineChanges(users, month = '') {
         const daysInMonth = new Date(year, monthNumber, 0).getDate();
         return Array.from({ length: daysInMonth }, (_, index) => {
             const day = localISODate(new Date(year, monthNumber - 1, index + 1));
-            return { day, ...(codingLocByDay.get(day) || { added: 0, deleted: 0 }) };
+            return { day, output: outputByDay.get(day) || 0 };
         });
     }
 
-    const allDays = [...codingLocByDay.keys()].sort();
+    const allDays = [...outputByDay.keys()].sort();
     if (!allDays.length) return [];
     const latestWeekStart = getWeekStart(allDays.at(-1));
     const firstWeekStart = new Date(latestWeekStart);
     firstWeekStart.setDate(firstWeekStart.getDate() - (WAU_WINDOW_WEEKS - 1) * 7);
-    const codingLocByWeek = new Map();
+    const outputByWeek = new Map();
 
-    for (const [day, values] of codingLocByDay) {
+    for (const [day, output] of outputByDay) {
         const weekStart = getWeekStart(day);
         if (weekStart < firstWeekStart || weekStart > latestWeekStart) continue;
         const weekKey = localISODate(weekStart);
-        const current = codingLocByWeek.get(weekKey) || { added: 0, deleted: 0 };
-        current.added += values.added;
-        current.deleted += values.deleted;
-        codingLocByWeek.set(weekKey, current);
+        outputByWeek.set(weekKey, (outputByWeek.get(weekKey) || 0) + output);
     }
 
     return Array.from({ length: WAU_WINDOW_WEEKS }, (_, index) => {
@@ -1997,19 +1999,106 @@ function computeCodingLineChanges(users, month = '') {
         const weekEnd = new Date(weekStart);
         weekEnd.setDate(weekEnd.getDate() + 6);
         const weekKey = localISODate(weekStart);
-        return { weekStart: weekKey, weekEnd: localISODate(weekEnd), ...(codingLocByWeek.get(weekKey) || { added: 0, deleted: 0 }) };
+        return { weekStart: weekKey, weekEnd: localISODate(weekEnd), output: outputByWeek.get(weekKey) || 0 };
     });
 }
 
-function renderLinesChangedChart(users) {
-    const container = document.getElementById('lines-changed-chart-container');
+function renderAiOutputChart(users) {
+    const container = document.getElementById('ai-output-chart-container');
     if (!container) return;
 
-    const periods = computeCodingLineChanges(users, currentMonthFilter);
-    container.innerHTML = buildLinesChangedChart(periods, currentMonthFilter);
+    const periods = computeAiOutputVolume(users, currentMonthFilter);
+    container.innerHTML = buildAiOutputChart(periods, currentMonthFilter);
 }
 
-function getLinesChangedAxis(maxLoc, dynamicScale) {
+function aggregateModelCredits(users) {
+    const totals = {};
+    for (const user of users) {
+        for (const [model, stats] of Object.entries(user.model_credit_stats || {})) {
+            const bucket = totals[model] || (totals[model] = { days: 0, credits: 0, turns: 0, code_gen: 0, loc: 0 });
+            bucket.days += stats.days || 0;
+            bucket.credits += stats.credits || 0;
+            bucket.turns += stats.turns || 0;
+            bucket.code_gen += stats.code_gen || 0;
+            bucket.loc += stats.loc || 0;
+        }
+    }
+    return totals;
+}
+
+function classifyWatchedModel(model) {
+    const normalized = String(model || '').trim().toLowerCase();
+    if ((watchModelUseGroups.expensive || []).some(m => String(m).trim().toLowerCase() === normalized)) return 'expensive';
+    if ((watchModelUseGroups.weak || []).some(m => String(m).trim().toLowerCase() === normalized)) return 'weak';
+    return '';
+}
+
+// Rates are derived only from days where a single model was active, because ai_credits_used
+// is reported per day and never per model.
+function buildModelCreditsTable(totals, opts = {}) {
+    const rows = Object.entries(totals)
+        .filter(([, s]) => s.credits > 0)
+        .map(([model, s]) => ({
+            model,
+            ...s,
+            perTurn: s.turns > 0 ? s.credits / s.turns : null,
+            perCodeGen: s.code_gen > 0 ? s.credits / s.code_gen : null,
+            perKiloLoc: s.loc > 0 ? s.credits / s.loc * 1000 : null
+        }))
+        .sort((a, b) => (b.perTurn ?? -1) - (a.perTurn ?? -1) || b.credits - a.credits);
+
+    if (!rows.length) {
+        return '<p style="color:var(--text-muted)">No AI-credit days attributable to a single model.</p>';
+    }
+
+    const totalDays = rows.reduce((sum, r) => sum + r.days, 0);
+    const totalCredits = rows.reduce((sum, r) => sum + r.credits, 0);
+    const maxPerTurn = Math.max(...rows.map(r => r.perTurn || 0), 1);
+    const minDays = Number(opts.minDays) || 0;
+
+    const body = rows.map(r => {
+        const watchClass = classifyWatchedModel(r.model);
+        const thin = minDays > 0 && r.days < minDays;
+        const barWidth = r.perTurn ? Math.max(2, r.perTurn / maxPerTurn * 100) : 0;
+        const fmtRate = value => value === null ? '—' : formatNumber(Math.round(value));
+        return `<tr class="${thin ? 'model-credits-thin' : ''}">
+            <td class="model-credits-name">
+                <span class="model-credits-dot${watchClass ? ' model-credits-dot-' + watchClass : ''}"></span>${r.model}
+            </td>
+            <td class="model-credits-num">${formatCredits(r.credits)}</td>
+            <td class="model-credits-rate">
+                <span class="model-credits-bar" style="width:${barWidth}%"></span>
+                <span class="model-credits-rate-value">${fmtRate(r.perTurn)}</span>
+            </td>
+            <td class="model-credits-num">${fmtRate(r.perCodeGen)}</td>
+            <td class="model-credits-num">${fmtRate(r.perKiloLoc)}</td>
+            <td class="model-credits-num model-credits-muted">${formatNumber(r.days)}</td>
+        </tr>`;
+    }).join('');
+
+    return `<table class="model-credits-table">
+            <thead>
+                <tr>
+                    <th>Model</th>
+                    <th class="model-credits-num" title="AI credits spent on days where this was the only active model">Credits</th>
+                    <th title="AI credits per user-initiated turn — one agent session counts as one turn but makes many model calls">Credits / turn</th>
+                    <th class="model-credits-num" title="AI credits per code generation activity">Cr / code-gen</th>
+                    <th class="model-credits-num" title="AI credits per 1,000 LOC suggested or applied">Cr / 1K LOC</th>
+                    <th class="model-credits-num" title="Number of user-days attributed to this model">Days</th>
+                </tr>
+            </thead>
+            <tbody>${body}</tbody>
+        </table>
+        <p class="model-credits-note">Based on ${formatNumber(totalDays)} user-days totalling ${formatCredits(totalCredits)} credits where one model accounted for at least 90% of the activity — genuinely mixed days are excluded because <code>ai_credits_used</code> is reported per day, not per model.${minDays > 0 ? ` Rows with fewer than ${minDays} days are dimmed as low-confidence.` : ''}</p>`;
+}
+
+function renderModelCreditsTable(users) {
+    const container = document.getElementById('model-credits-container');
+    if (!container) return;
+    container.innerHTML = buildModelCreditsTable(aggregateModelCredits(users), { minDays: 5 });
+}
+
+function getAiOutputAxis(maxLoc, dynamicScale) {
     if (!dynamicScale) {
         const tickStep = 2500;
         return {
@@ -2033,23 +2122,21 @@ function getLinesChangedAxis(maxLoc, dynamicScale) {
     };
 }
 
-function buildLinesChangedChart(periods, month = '', opts = {}) {
+function buildAiOutputChart(periods, month = '', opts = {}) {
     if (!periods.length) {
-        return '<p style="color:var(--text-muted)">No coding LOC data available.</p>';
+        return '<p style="color:var(--text-muted)">No AI output data available.</p>';
     }
 
-    const maxLoc = Math.max(...periods.flatMap(period => [period.added, period.deleted]), 0);
-    const { tickStep: locTickStep, max: yAxisMax } = getLinesChangedAxis(maxLoc, opts.dynamicScale);
+    const maxLoc = Math.max(...periods.map(period => period.output), 0);
+    const { tickStep: locTickStep, max: yAxisMax } = getAiOutputAxis(maxLoc, opts.dynamicScale);
     const bars = periods.map(period => {
-        const addedHeight = Math.round(period.added / yAxisMax * LINES_CHANGED_CHART_HEIGHT);
-        const deletedHeight = Math.round(period.deleted / yAxisMax * LINES_CHANGED_CHART_HEIGHT);
+        const height = Math.round(period.output / yAxisMax * AI_OUTPUT_CHART_HEIGHT);
         const periodLabel = period.day
             ? period.day
             : `${formatCompactDate(period.weekStart)}-${formatCompactDate(period.weekEnd)}`;
-        const tooltip = `${periodLabel}: ${formatNumber(period.added)} LOC added, ${formatNumber(period.deleted)} LOC deleted`;
-        return `<div class="lines-changed-period" title="${tooltip}" aria-label="${tooltip}">
-            <span class="lines-changed-bar lines-changed-added" style="height:${addedHeight}px"></span>
-            <span class="lines-changed-bar lines-changed-deleted" style="height:${deletedHeight}px"></span>
+        const tooltip = `${periodLabel}: ${formatNumber(period.output)} LOC produced with AI`;
+        return `<div class="ai-output-period" title="${tooltip}" aria-label="${tooltip}">
+            <span class="ai-output-bar" style="height:${height}px"></span>
         </div>`;
     }).join('');
 
@@ -2061,7 +2148,7 @@ function buildLinesChangedChart(periods, month = '', opts = {}) {
         `<span>${formatNumber(value)}</span>`
     ).join('');
     const gridLines = tickValues.map(value =>
-        `<span class="lines-changed-grid-line" style="bottom:${value / yAxisMax * 100}%"></span>`
+        `<span class="ai-output-grid-line" style="bottom:${value / yAxisMax * 100}%"></span>`
     ).join('');
     const isMonthlyView = Boolean(month);
     const xAxisLabels = periods.map((period, index) => {
@@ -2071,28 +2158,26 @@ function buildLinesChangedChart(periods, month = '', opts = {}) {
             const date = new Date(period.day + 'T12:00:00');
             const dayOfWeek = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'][date.getDay()];
             const isWeekend = date.getDay() === 0 || date.getDay() === 6;
-            label = `${Number(period.day.slice(-2))}<span class="lines-changed-day-of-week${isWeekend ? ' lines-changed-weekend' : ''}">${dayOfWeek}</span>`;
+            label = `${Number(period.day.slice(-2))}<span class="ai-output-day-of-week${isWeekend ? ' ai-output-weekend' : ''}">${dayOfWeek}</span>`;
         } else if (index % 4 === 0 || isLastPeriod) {
             label = `${period.weekStart.slice(8, 10)}.${period.weekStart.slice(5, 7)}`;
         }
         return `<span>${label}</span>`;
     }).join('');
 
+    const total = periods.reduce((sum, period) => sum + period.output, 0);
     return `
-        <div class="lines-changed-chart-shell">
-            <div class="lines-changed-y-axis" style="height:${LINES_CHANGED_CHART_HEIGHT}px">${yAxisTicks}</div>
-            <div class="lines-changed-plot">
-                <div class="lines-changed-chart" style="height:${LINES_CHANGED_CHART_HEIGHT}px">
-                    <div class="lines-changed-grid">${gridLines}</div>
+        <div class="ai-output-chart-shell">
+            <div class="ai-output-y-axis" style="height:${AI_OUTPUT_CHART_HEIGHT}px">${yAxisTicks}</div>
+            <div class="ai-output-plot">
+                <div class="ai-output-chart" style="height:${AI_OUTPUT_CHART_HEIGHT}px">
+                    <div class="ai-output-grid">${gridLines}</div>
                     ${bars}
                 </div>
-                <div class="lines-changed-x-axis">${xAxisLabels}</div>
+                <div class="ai-output-x-axis">${xAxisLabels}</div>
             </div>
         </div>
-        <div class="chart-legend lines-changed-legend">
-            <span><span class="legend-dot lines-changed-added"></span>LOC added</span>
-            <span><span class="legend-dot lines-changed-deleted"></span>LOC deleted</span>
-        </div>`;
+        <p class="ai-output-note">${formatNumber(total)} lines of output in total — every line Copilot produced, whether suggested or applied, across coding and steering languages.</p>`;
 }
 
 function buildCombinedChart(daily, month, opts = {}) {

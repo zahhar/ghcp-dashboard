@@ -87,7 +87,9 @@ const mimeTypes = {
 // Source: https://github.com/microsoft/vscode-docs/blob/main/docs/languages/identifiers.md
 // Languages treated as documentation/steering (Markdown, prompts, etc.) rather than code;
 // LOC for these is counted separately as doc_loc instead of code_loc
-const documentingLanguages = ['markdown', 'text', 'prompt', 'instructions', 'mermaid', 'plaintext', 'bibtex', 'snippets', 'latex', 'restructuredtext', 'search-result', 'skill', 'tex', 'chatagent'];
+// 'unknown' is included because it is almost entirely agent_edit output the IDE could not
+// classify (generated artifacts, extension-less files) — counting it as code inflates coding LOC.
+const documentingLanguages = ['markdown', 'text', 'prompt', 'instructions', 'mermaid', 'plaintext', 'bibtex', 'snippets', 'latex', 'restructuredtext', 'search-result', 'skill', 'tex', 'chatagent', 'unknown'];
 
 function normalizeWatchModelUse(raw) {
     const flat = [];
@@ -173,6 +175,44 @@ function addInteractionCounts(rows, nameField, target) {
         const count = row.interaction_count || 0;
         if (name && count > 0) target[name] = (target[name] || 0) + count;
     }
+}
+
+// ai_credits_used is reported per row, never per model. A row is attributed only when one
+// model accounts for nearly all of its activity; genuinely mixed rows are skipped rather than
+// split by a guessed weight, so the resulting per-model rates stay defensible.
+const MODEL_CREDIT_DOMINANCE = 0.9;
+
+function dominantModel(entry) {
+    const source = entry.totals_by_model_feature?.length
+        ? entry.totals_by_model_feature
+        : (entry.totals_by_language_model || []);
+    const usage = {};
+    for (const row of source) {
+        if (!row.model) continue;
+        const turns = row.user_initiated_interaction_count || 0;
+        const codeGen = row.code_generation_activity_count || 0;
+        const loc = (row.loc_added_sum || 0) + (row.loc_deleted_sum || 0)
+            + (row.loc_suggested_to_add_sum || 0) + (row.loc_suggested_to_delete_sum || 0);
+        if (turns + codeGen + loc <= 0) continue;
+        const bucket = usage[row.model] || (usage[row.model] = { effort: 0, loc: 0 });
+        bucket.effort += turns + codeGen;
+        bucket.loc += loc;
+    }
+    const models = Object.keys(usage);
+    if (!models.length) return null;
+    if (models.length === 1) return models[0];
+
+    // Turns + code generations measure prompting effort on a comparable scale; LOC only breaks
+    // ties when no model on the row reported either.
+    let weight = m => usage[m].effort;
+    let total = models.reduce((sum, m) => sum + weight(m), 0);
+    if (total === 0) {
+        weight = m => usage[m].loc;
+        total = models.reduce((sum, m) => sum + weight(m), 0);
+    }
+    if (total === 0) return null;
+    const leader = models.reduce((best, m) => (weight(m) > weight(best) ? m : best));
+    return weight(leader) / total >= MODEL_CREDIT_DOMINANCE ? leader : null;
 }
 
 // Process data on the fly
@@ -430,6 +470,7 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                     skillInteractions: {},     // { [skill]: interaction_count }
                     slashCmdInteractions: {},  // { [slash_cmd]: interaction_count }
                     customAgentInteractions: {},  // { [custom_agent]: interaction_count }
+                    modelCreditStats: {},      // { [model]: { days, credits, turns, code_gen, loc } }
                 };
             }
 
@@ -484,6 +525,22 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             addInteractionCounts(entry.totals_by_skill, 'skill', stats.skillInteractions);
             addInteractionCounts(entry.totals_by_slash_cmd, 'slash_cmd', stats.slashCmdInteractions);
             addInteractionCounts(entry.totals_by_custom_agent, 'custom_agent', stats.customAgentInteractions);
+
+            const entryCredits = Number(entry.ai_credits_used) || 0;
+            if (entryCredits > 0) {
+                // Row-level totals, since the credits they are divided by are also row-level.
+                const model = dominantModel(entry);
+                if (model) {
+                    const bucket = stats.modelCreditStats[model]
+                        || (stats.modelCreditStats[model] = { days: 0, credits: 0, turns: 0, code_gen: 0, loc: 0 });
+                    bucket.days++;
+                    bucket.credits += entryCredits;
+                    bucket.turns += entry.user_initiated_interaction_count || 0;
+                    bucket.code_gen += entry.code_generation_activity_count || 0;
+                    bucket.loc += (entry.loc_added_sum || 0) + (entry.loc_deleted_sum || 0)
+                        + (entry.loc_suggested_to_add_sum || 0) + (entry.loc_suggested_to_delete_sum || 0);
+                }
+            }
             if (entry.day && entry.totals_by_cli?.last_known_cli_version?.cli_version) {
                 const cv = entry.totals_by_cli.last_known_cli_version.cli_version;
                 if (!stats.cli_version_info || entry.day >= stats.cli_version_info.last_seen_day) {
@@ -506,7 +563,7 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                 const entryCliRequests = Number(entry.totals_by_cli?.request_count) || 0;
 
                 if (!stats.daily[entry.day]) {
-                    stats.daily[entry.day] = { user_initiated: 0, code_generation: 0, code_loc: 0, doc_loc: 0, code_loc_added: 0, code_loc_deleted: 0, cli_turns: 0 };
+                    stats.daily[entry.day] = { user_initiated: 0, code_generation: 0, code_loc: 0, doc_loc: 0, cli_turns: 0 };
                 }
                 stats.daily[entry.day].user_initiated += entryChatInitiated;
                 stats.daily[entry.day].code_generation += (entry.code_generation_activity_count || 0);
@@ -545,8 +602,6 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
 
             if (Array.isArray(entry.totals_by_language_feature)) {
                 let entryDocLoc = 0, entryTotalLoc = 0;
-                let entryDocLocAdded = 0, entryDocLocDeleted = 0;
-                let entryTotalLocAdded = 0, entryTotalLocDeleted = 0;
                 for (const lf of entry.totals_by_language_feature) {
                     const lang = (lf.language || 'unknown').toLowerCase();
                     const locAdded = lf.loc_added_sum || 0;
@@ -561,19 +616,13 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
                         stats.doc_loc_applied_sum += acceptedLoc;
                         if (outputLoc > 0) stats.doc_languages.add(lf.language);
                         entryDocLoc += outputLoc;
-                        entryDocLocAdded += locAdded;
-                        entryDocLocDeleted += locDeleted;
                     }
                     if (outputLoc > 0) stats.allLocByLanguage[lf.language || 'unknown'] = (stats.allLocByLanguage[lf.language || 'unknown'] || 0) + outputLoc;
                     entryTotalLoc += outputLoc;
-                    entryTotalLocAdded += locAdded;
-                    entryTotalLocDeleted += locDeleted;
                 }
                 if (entry.day && stats.daily[entry.day]) {
                     stats.daily[entry.day].doc_loc += entryDocLoc;
                     stats.daily[entry.day].code_loc += entryTotalLoc - entryDocLoc;
-                    stats.daily[entry.day].code_loc_added += entryTotalLocAdded - entryDocLocAdded;
-                    stats.daily[entry.day].code_loc_deleted += entryTotalLocDeleted - entryDocLocDeleted;
                 }
                 if (entry.day && stats.accountDaily[rawLogin] && stats.accountDaily[rawLogin][entry.day]) {
                     stats.accountDaily[rawLogin][entry.day].doc_loc += entryDocLoc;
@@ -1032,7 +1081,7 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             all_doc_languages_list: [...user.doc_languages].sort(),
             daily: Object.entries(user.daily)
                 .sort(([a], [b]) => a.localeCompare(b))
-                .map(([day, d]) => ({ day, user_initiated: d.user_initiated, code_generation: d.code_generation, cli_turns: d.cli_turns, code_loc: d.code_loc, doc_loc: d.doc_loc, code_loc_added: d.code_loc_added || 0, code_loc_deleted: d.code_loc_deleted || 0 })),
+                .map(([day, d]) => ({ day, user_initiated: d.user_initiated, code_generation: d.code_generation, cli_turns: d.cli_turns, code_loc: d.code_loc, doc_loc: d.doc_loc })),
             accounts: userAccounts,
             emails: userEmails,
             account_daily: Object.fromEntries(
@@ -1064,6 +1113,7 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             interactions_by_skill: user.skillInteractions,
             interactions_by_slash_cmd: user.slashCmdInteractions,
             interactions_by_custom_agent: user.customAgentInteractions,
+            model_credit_stats: user.modelCreditStats,
             models: undefined,
             ides: undefined,
             languages: undefined,
@@ -1084,6 +1134,7 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             skillInteractions: undefined,
             slashCmdInteractions: undefined,
             customAgentInteractions: undefined,
+            modelCreditStats: undefined,
             accountDaily: undefined,
             licenseDaily: undefined,
             account_ides: Object.fromEntries(
@@ -1180,6 +1231,7 @@ async function getAggregatedData(monthFilter = null, dayLimit = null) {
             loc_by_model: {}, loc_by_language: {}, loc_by_code_language: {},
             loc_by_doc_language: {}, loc_by_feature: {}, loc_by_ide: {},
             interactions_by_mcp: {}, interactions_by_plugin: {}, interactions_by_skill: {}, interactions_by_slash_cmd: {}, interactions_by_custom_agent: {},
+            model_credit_stats: {},
         });
     }
 

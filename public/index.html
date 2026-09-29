@@ -148,14 +148,25 @@
                 </div>
             </section>
 
-            <!-- Lines changed by AI -->
+            <!-- AI output volume -->
             <section class="card glass">
-                <div class="card-header section-toggle-header" style="display:flex;align-items:center;gap:0.6rem;cursor:pointer;user-select:none" id="lines-changed-toggle" title="Click to collapse/expand">
-                    <span class="section-chevron" id="lines-changed-chevron">&#9660;</span>
-                    <h2 style="color:var(--text-main)">Lines changed by AI</h2>
+                <div class="card-header section-toggle-header" style="display:flex;align-items:center;gap:0.6rem;cursor:pointer;user-select:none" id="ai-output-toggle" title="Click to collapse/expand">
+                    <span class="section-chevron" id="ai-output-chevron">&#9660;</span>
+                    <h2 style="color:var(--text-main)">AI Output Volume</h2>
                 </div>
-                <div class="section-collapsible" id="lines-changed-collapsible">
-                    <div id="lines-changed-chart-container"></div>
+                <div class="section-collapsible" id="ai-output-collapsible">
+                    <div id="ai-output-chart-container"></div>
+                </div>
+            </section>
+
+            <!-- AI credits by model -->
+            <section class="card glass">
+                <div class="card-header section-toggle-header" style="display:flex;align-items:center;gap:0.6rem;cursor:pointer;user-select:none" id="model-credits-toggle" title="Click to collapse/expand">
+                    <span class="section-chevron" id="model-credits-chevron">&#9660;</span>
+                    <h2 style="color:var(--text-main)">AI credits by model</h2>
+                </div>
+                <div class="section-collapsible" id="model-credits-collapsible">
+                    <div id="model-credits-container"></div>
                 </div>
             </section>
 
@@ -170,21 +181,13 @@
                         <div id="donut-model"></div>
                         <div id="donut-model-class"></div>
                         <div id="donut-language"></div>
-                    </div>
-                    <div class="donut-grid" style="margin-top:1.25rem">
                         <div id="donut-ide"></div>
                         <div id="donut-activity"></div>
                         <div id="donut-feature"></div>
-                    </div>
-                    <div class="donut-grid" style="margin-top:1.25rem">
                         <div id="donut-syntax"></div>
                         <div id="donut-phase"></div>
                         <div id="donut-version"></div>
-                    </div>
-                    <div class="donut-grid" style="margin-top:1.25rem">
                         <div id="donut-streak"></div>
-                    </div>
-                    <div class="donut-grid" style="margin-top:1.25rem">
                         <div id="donut-mcp"></div>
                         <div id="donut-plugin"></div>
                         <div id="donut-skill"></div>
